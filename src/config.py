@@ -7,13 +7,27 @@ runtime with the /provider and /model slash commands.
 Supported providers: vertexai, ai-studio, openai, anthropic, openrouter, nvidia-nim
 """
 
+"""
+Configuration and environment management for Klat.
+
+Provider / model selection is stored in ~/.klat/settings/config.json and can be changed at
+runtime with the /provider and /model slash commands.
+
+Supported providers: vertexai, ai-studio, openai, anthropic, openrouter, nvidia-nim
+"""
+
 import os
 import sys
+import json
 from pathlib import Path
-from dotenv import load_dotenv, set_key
 
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
 
+# Configuration paths
+CONFIG_DIR = Path.home() / ".klat" / "settings"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# Old environment paths for migration
 ENV_DIR  = Path(__file__).parent.parent / "env"
 ENV_FILE = ENV_DIR / ".env"
 
@@ -25,6 +39,8 @@ _state: dict = {
     "provider": None,   # None until ensure_env() resolves one
     "model":    None,   # None → use provider's default_model
 }
+
+_config: dict[str, str] = {}
 
 
 def current_provider() -> str:
@@ -53,10 +69,20 @@ def set_model(model: str) -> None:
 
 
 def _persist() -> None:
-    """Write provider & model back to env/.env."""
-    ENV_DIR.mkdir(parents=True, exist_ok=True)
-    set_key(str(ENV_FILE), "KLAT_PROVIDER", _state["provider"] or "")
-    set_key(str(ENV_FILE), "KLAT_MODEL",    _state["model"] or "")
+    """Write provider & model back to config.json."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    current_data = {}
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                current_data = json.load(f)
+        except Exception:
+            pass
+    current_data["provider"] = _state["provider"] or ""
+    current_data["model"] = _state["model"] or ""
+
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(current_data, f, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +115,7 @@ def _run_setup() -> None:
     print(f"\n{GREEN}First-time setup{RESET}")
     print("Configure at least one provider. Press Enter to skip any.\n")
 
-    lines: list[str] = []
+    setup_config: dict[str, str] = {}
 
     for key, p in PROVIDERS.items():
         print(f"  {GREEN}{p['display_name']}{RESET}  {DIM}({p['notes']}){RESET}")
@@ -98,8 +124,8 @@ def _run_setup() -> None:
             project = _ask(f"    Google Cloud project ID (blank to skip)").strip()
             if project:
                 location = _ask(f"    Location (blank for global)").strip() or "global"
-                lines.append(f"GOOGLE_CLOUD_PROJECT={project}")
-                lines.append(f"GOOGLE_CLOUD_LOCATION={location}")
+                setup_config["google_cloud_project"] = project
+                setup_config["google_cloud_location"] = location
                 print(f"    {DIM}✓ Vertex AI configured{RESET}")
             else:
                 print(f"    {DIM}skipped{RESET}")
@@ -107,20 +133,30 @@ def _run_setup() -> None:
         elif p["env_key"]:
             val = _ask(f"    {p['env_key']} (blank to skip)").strip()
             if val:
-                lines.append(f"{p['env_key']}={val}")
+                setup_config[p["env_key"].lower()] = val
                 print(f"    {DIM}✓ saved{RESET}")
             else:
                 print(f"    {DIM}skipped{RESET}")
 
         print()
 
-    if not lines:
+    if not setup_config:
         print(f"{GREEN}!{RESET} No providers configured — exiting.\n")
         sys.exit(1)
 
-    ENV_DIR.mkdir(parents=True, exist_ok=True)
-    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"{GREEN}✓{RESET} Config saved to env/.env\n")
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    current_data = {}
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                current_data = json.load(f)
+        except Exception:
+            pass
+    current_data.update(setup_config)
+
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(current_data, f, indent=2)
+    print(f"{GREEN}✓{RESET} Config saved to {CONFIG_FILE}\n")
 
 
 def _ask(prompt: str) -> str:
@@ -134,26 +170,94 @@ def _ask(prompt: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Migration and Loading helpers
+# ---------------------------------------------------------------------------
+
+def _migrate_old_env() -> None:
+    """Automatically migrate old env/.env file to ~/.klat/settings/config.json."""
+    if ENV_FILE.exists():
+        migrated_data = {}
+        try:
+            with open(ENV_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if (v.startswith("'") and v.endswith("'")) or (v.startswith('"') and v.endswith('"')):
+                            v = v[1:-1]
+                        norm_key = k.lower()
+                        if norm_key.startswith("klat_"):
+                            norm_key = norm_key[5:]
+                        migrated_data[norm_key] = v
+
+            if migrated_data:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                existing_data = {}
+                if CONFIG_FILE.exists():
+                    try:
+                        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                            existing_data = json.load(f)
+                    except Exception:
+                        pass
+                existing_data.update(migrated_data)
+
+                with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                    json.dump(existing_data, f, indent=2)
+
+            try:
+                ENV_FILE.unlink()
+                if ENV_DIR.exists() and not any(ENV_DIR.iterdir()):
+                    ENV_DIR.rmdir()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"Migration error: {e}")
+
+
+def _load_config() -> None:
+    """Load configuration from config.json and inject API keys into os.environ."""
+    global _config
+    _config = {}
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        _config[k.lower().strip()] = str(v)
+        except Exception as e:
+            print(f"Error reading config: {e}")
+
+    for k, v in _config.items():
+        if k not in ("provider", "model"):
+            os.environ[k.upper()] = v
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 def ensure_env() -> tuple[str, str]:
     """
-    Load env/.env, run setup wizard if needed, and return (project, location)
-    for Vertex AI (empty strings when using a non-Vertex provider).
+    Load ~/.klat/settings/config.json, run setup wizard if needed, and return
+    (project, location) for Vertex AI (empty strings when using a non-Vertex provider).
 
     Exits if no provider is configured after setup.
     """
-    ENV_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_old_env()
 
-    if not ENV_FILE.exists():
+    if not CONFIG_FILE.exists():
         _run_setup()
 
-    load_dotenv(ENV_FILE)
+    _load_config()
 
     # Restore persisted provider / model choice
-    saved_provider = os.getenv("KLAT_PROVIDER", "").strip()
-    saved_model    = os.getenv("KLAT_MODEL",    "").strip()
+    saved_provider = _config.get("provider", "").strip()
+    saved_model    = _config.get("model", "").strip()
 
     if saved_provider and saved_provider in PROVIDERS:
         _state["provider"] = saved_provider
@@ -164,7 +268,7 @@ def ensure_env() -> tuple[str, str]:
     available = configured_providers()
     if not available:
         print(
-            "\n! No providers are configured in env/.env.\n"
+            f"\n! No providers are configured in {CONFIG_FILE}.\n"
             "  Add at least one API key and restart Klat.\n"
         )
         sys.exit(1)
@@ -173,7 +277,13 @@ def ensure_env() -> tuple[str, str]:
     if _state["provider"] not in available:
         _state["provider"] = available[0]
 
-    project  = os.getenv("GOOGLE_CLOUD_PROJECT",  "").strip()
-    location = os.getenv("GOOGLE_CLOUD_LOCATION", "global").strip()
+    project  = _config.get("google_cloud_project", "").strip()
+    location = _config.get("google_cloud_location", "global").strip()
+
+    if project:
+        os.environ["GOOGLE_CLOUD_PROJECT"] = project
+    if location:
+        os.environ["GOOGLE_CLOUD_LOCATION"] = location
 
     return project, location
+

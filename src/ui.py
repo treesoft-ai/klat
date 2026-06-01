@@ -10,7 +10,7 @@ GREEN = "\033[38;2;0;180;80m"
 RESET = "\033[0m"
 DIM   = "\033[2m"
 
-BANNER_SUBTITLE = "software engineer"
+BANNER_SUBTITLE = "swe agent"
 
 
 _LOGO_LINES = [
