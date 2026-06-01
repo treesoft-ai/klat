@@ -355,6 +355,165 @@ TOOL_DECLARATIONS = [
             "required": [],
         },
     },
+    {
+        "name": "copy_file",
+        "description": (
+            "Copy a file (or directory) to a new destination, preserving metadata. "
+            "Creates parent directories as needed. Returns a confirmation string."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the file to copy.",
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "Absolute or relative destination path (file or directory).",
+                },
+            },
+            "required": ["source", "destination"],
+        },
+    },
+    {
+        "name": "git",
+        "description": (
+            "Run a git operation in the working directory (or a specified path). "
+            "Supported operations: status, log, diff, add, commit, checkout, branch, stash, blame, show, pull, push. "
+            "Returns the git command output as a string."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "description": "Git sub-command: status, log, diff, add, commit, checkout, branch, stash, blame, show, pull, push.",
+                },
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Additional arguments to pass to the git sub-command, e.g. ['--oneline', '-10'] for log.",
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Directory to run git in. Defaults to the Klat working directory.",
+                },
+            },
+            "required": ["op"],
+        },
+    },
+    {
+        "name": "insert_lines",
+        "description": (
+            "Insert new content into a file without replacing any existing lines. "
+            "The new content is inserted *after* the given line number. "
+            "Use after_line=0 to prepend at the top of the file. "
+            "Returns a confirmation string."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the file to edit.",
+                },
+                "after_line": {
+                    "type": "integer",
+                    "description": "Insert after this line number (1-indexed). Use 0 to prepend at the start of the file.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The text to insert. A trailing newline is added automatically if missing.",
+                },
+            },
+            "required": ["path", "after_line", "content"],
+        },
+    },
+    {
+        "name": "read_many_files",
+        "description": (
+            "Read multiple files in a single call. "
+            "Returns a mapping of path → contents for each file. "
+            "Use this instead of multiple read_file calls when you need several files at once."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of absolute or relative file paths to read.",
+                },
+                "max_bytes_each": {
+                    "type": "integer",
+                    "description": "Truncate each file at this many bytes. Defaults to 32768 (32 KB).",
+                },
+            },
+            "required": ["paths"],
+        },
+    },
+    {
+        "name": "replace_in_file",
+        "description": (
+            "Find and replace text in a file by content, not by line number. "
+            "Replaces the first occurrence by default; set count=-1 to replace all occurrences. "
+            "Returns the number of replacements made."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the file to edit.",
+                },
+                "old_text": {
+                    "type": "string",
+                    "description": "The exact string to search for (literal, not a regex).",
+                },
+                "new_text": {
+                    "type": "string",
+                    "description": "The replacement string.",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Maximum number of replacements. Defaults to 1. Use -1 to replace all occurrences.",
+                },
+            },
+            "required": ["path", "old_text", "new_text"],
+        },
+    },
+    {
+        "name": "tree",
+        "description": (
+            "Display a directory structure as an indented tree. "
+            "Much more useful than list_dir for understanding project layout at a glance. "
+            "Skips hidden directories (.git, .venv, __pycache__, node_modules) by default. "
+            "Returns the tree as a plain-text string."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Root directory to display. Defaults to '.' (working directory).",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum depth to recurse. Defaults to 4. Use -1 for unlimited.",
+                },
+                "show_hidden": {
+                    "type": "boolean",
+                    "description": "Include hidden directories (.git, .venv, etc.). Defaults to false.",
+                },
+                "dirs_only": {
+                    "type": "boolean",
+                    "description": "Show only directories, not individual files. Defaults to false.",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -705,6 +864,169 @@ def _process_list(filter_str: str | None = None) -> str:
         return result.stdout.strip() or "(no output)"
 
 
+def _copy_file(source: str, destination: str) -> str:
+    src = _resolve(source)
+    dst = _resolve(destination)
+    if not src.exists():
+        return f"Error: not found: {src}"
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(str(src), str(dst), dirs_exist_ok=True)
+            return f"Copied directory {src} -> {dst}"
+        else:
+            shutil.copy2(str(src), str(dst))
+            return f"Copied {src} -> {dst}"
+    except Exception as e:
+        return f"Error copying {src}: {e}"
+
+
+_GIT_ALLOWED_OPS = {
+    "status", "log", "diff", "add", "commit", "checkout",
+    "branch", "stash", "blame", "show", "pull", "push",
+}
+
+def _git(op: str, args: list[str] | None, cwd: str | None) -> str:
+    op = op.lower().strip()
+    if op not in _GIT_ALLOWED_OPS:
+        return (
+            f"Error: unsupported git operation '{op}'. "
+            f"Allowed: {', '.join(sorted(_GIT_ALLOWED_OPS))}"
+        )
+    git_exe = shutil.which("git")
+    if not git_exe:
+        return "Error: git is not installed or not found in PATH."
+    run_cwd = _resolve(cwd) if cwd else WORK_DIR
+    cmd = [git_exe, op] + (args or [])
+    try:
+        result = subprocess.run(
+            cmd, cwd=str(run_cwd),
+            capture_output=True, text=True, timeout=30,
+        )
+        parts = []
+        if result.stdout.strip():
+            parts.append(result.stdout.rstrip())
+        if result.stderr.strip():
+            parts.append(f"[stderr]\n{result.stderr.rstrip()}")
+        if not parts:
+            parts.append(f"(git {op}: no output, exit code {result.returncode})")
+        else:
+            parts.append(f"[exit code: {result.returncode}]")
+        return "\n".join(parts)
+    except subprocess.TimeoutExpired:
+        return f"Error: git {op} timed out after 30s"
+    except Exception as e:
+        return f"Error running git {op}: {e}"
+
+
+def _insert_lines(path: str, after_line: int, content: str) -> str:
+    p = _resolve(path)
+    if not p.exists():
+        return f"Error: not found: {p}"
+    if not p.is_file():
+        return f"Error: not a file: {p}"
+    try:
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        total = len(lines)
+        if after_line < 0 or after_line > total:
+            return f"Error: after_line {after_line} is out of range (file has {total} lines; use 0 to prepend)"
+        # Ensure the insertion ends with a newline
+        insertion = content if content.endswith("\n") else content + "\n"
+        new_lines = lines[:after_line] + [insertion] + lines[after_line:]
+        p.write_text("".join(new_lines), encoding="utf-8")
+        return f"Inserted {len(insertion.splitlines())} line(s) after line {after_line} in {p}"
+    except Exception as e:
+        return f"Error inserting into {p}: {e}"
+
+
+def _read_many_files(paths: list[str], max_bytes_each: int = 32768) -> str:
+    results: list[str] = []
+    for raw_path in paths:
+        p = _resolve(raw_path)
+        header = f"=== {raw_path} ==="
+        if not p.exists():
+            results.append(f"{header}\nError: not found\n")
+            continue
+        if not p.is_file():
+            results.append(f"{header}\nError: not a file\n")
+            continue
+        try:
+            raw = p.read_bytes()
+            truncated = len(raw) > max_bytes_each
+            text = raw[:max_bytes_each].decode("utf-8", errors="replace")
+            if truncated:
+                text += f"\n... (truncated at {max_bytes_each} bytes; total {len(raw)} bytes)"
+            results.append(f"{header}\n{text}\n")
+        except Exception as e:
+            results.append(f"{header}\nError reading file: {e}\n")
+    return "\n".join(results) if results else "(no files requested)"
+
+
+def _replace_in_file(path: str, old_text: str, new_text: str, count: int = 1) -> str:
+    p = _resolve(path)
+    if not p.exists():
+        return f"Error: not found: {p}"
+    if not p.is_file():
+        return f"Error: not a file: {p}"
+    try:
+        original = p.read_text(encoding="utf-8", errors="replace")
+        if old_text not in original:
+            return f"No occurrences of the specified text found in {p}"
+        if count == -1:
+            updated = original.replace(old_text, new_text)
+            n = original.count(old_text)
+        else:
+            updated = original.replace(old_text, new_text, count)
+            n = min(count, original.count(old_text))
+        p.write_text(updated, encoding="utf-8")
+        return f"Replaced {n} occurrence(s) in {p}"
+    except Exception as e:
+        return f"Error replacing in {p}: {e}"
+
+
+def _tree(
+    path: str = ".",
+    max_depth: int = 4,
+    show_hidden: bool = False,
+    dirs_only: bool = False,
+) -> str:
+    _SKIP = {"__pycache__", ".git", ".venv", "node_modules", ".mypy_cache",
+             ".pytest_cache", ".tox", "dist", "build", ".eggs"}
+
+    root = _resolve(path)
+    if not root.exists():
+        return f"Error: not found: {root}"
+    if not root.is_dir():
+        return f"Error: not a directory: {root}"
+
+    lines: list[str] = [str(root)]
+
+    def _walk(directory: Path, prefix: str, depth: int) -> None:
+        if max_depth != -1 and depth > max_depth:
+            return
+        try:
+            entries = sorted(directory.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
+        except PermissionError:
+            lines.append(prefix + "    [permission denied]")
+            return
+
+        entries = [e for e in entries if show_hidden or not e.name.startswith(".")]
+        entries = [e for e in entries if e.name not in _SKIP]
+        if dirs_only:
+            entries = [e for e in entries if e.is_dir()]
+
+        for i, entry in enumerate(entries):
+            is_last = i == len(entries) - 1
+            connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
+            lines.append(prefix + connector + entry.name + ("/" if entry.is_dir() else ""))
+            if entry.is_dir():
+                extension = "    " if is_last else "\u2502   "
+                _walk(entry, prefix + extension, depth + 1)
+
+    _walk(root, "", 1)
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -776,6 +1098,39 @@ def dispatch(name: str, args: dict) -> str:
             return _env_var(args["names"])
         if name == "process_list":
             return _process_list(args.get("filter"))
+        if name == "copy_file":
+            return _copy_file(args["source"], args["destination"])
+        if name == "git":
+            return _git(
+                args["op"],
+                args.get("args"),
+                args.get("cwd"),
+            )
+        if name == "insert_lines":
+            return _insert_lines(
+                args["path"],
+                int(args["after_line"]),
+                args["content"],
+            )
+        if name == "read_many_files":
+            return _read_many_files(
+                args["paths"],
+                int(args.get("max_bytes_each", 32768)),
+            )
+        if name == "replace_in_file":
+            return _replace_in_file(
+                args["path"],
+                args["old_text"],
+                args["new_text"],
+                int(args.get("count", 1)),
+            )
+        if name == "tree":
+            return _tree(
+                args.get("path", "."),
+                int(args.get("max_depth", 4)),
+                bool(args.get("show_hidden", False)),
+                bool(args.get("dirs_only", False)),
+            )
 
         # Check dynamic tools
         from src.extensions import DYNAMIC_TOOLS
