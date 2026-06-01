@@ -47,6 +47,11 @@ def current_provider() -> str:
     return _state["provider"]
 
 
+def get_ascii_style() -> str:
+    """Return the ascii_style config value, defaulting to 'default'."""
+    return _config.get("ascii_style", "default").strip().lower()
+
+
 def current_model() -> str:
     """Return the active model name (falls back to provider default)."""
     if _state["model"]:

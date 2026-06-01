@@ -31,13 +31,31 @@ def colorize_gradient(text: str) -> str:
     return "".join(parts)
 
 
-_LOGO_LINES = [
+_DEFAULT_LOGO = [
+    " __  __    ",
+    "/\\ \\/ /    ",
+    "\\ \\  _\"-.  ",
+    " \\ \\_\\ \\_\\ ",
+    "  \\/_/\\/_/ ",
+    "           ",
+]
+
+_LEGACY_LOGO = [
     "  \u2588\u2588\u2557  \u2588\u2588\u2557\u2588\u2588\u2551      \u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557",
     "  \u2588\u2588\u2551 \u2588\u2588\u2554\u255d\u2588\u2588\u2551     \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u255a\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255d",
     "  \u2588\u2588\u2588\u2588\u2588\u2554\u255d \u2588\u2588\u2551     \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551   \u2588\u2588\u2551   ",
     "  \u2588\u2588\u2554\u2550\u2588\u2588\u2557 \u2588\u2588\u2551     \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551   \u2588\u2588\u2551   ",
     "  \u2588\u2588\u2551  \u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557\u2588\u2588\u2551  \u2588\u2588\u2551   \u2588\u2588\u2551   ",
     "  \u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d   \u255a\u2550\u255d   ",
+]
+
+_EXPERIMENTAL_LOGO = [
+    " __  __     __         ______     ______  ",
+    "/\\ \\/ /    /\\ \\       /\\  __ \\   /\\__  _\\ ",
+    "\\ \\  _\"-.  \\ \\ \\____  \\ \\  __ \\  \\/_/\\ \\/ ",
+    " \\ \\_\\ \\_\\  \\ \\_____\\  \\ \\_\\ \\_\\    \\ \\_\\ ",
+    "  \\/_/\\/_/   \\/_____/   \\/_/\\/_/     \\/_/ ",
+    "                                          ",
 ]
 
 _LOGO_COLORS = [
@@ -49,19 +67,32 @@ _LOGO_COLORS = [
     "\033[38;2;2;219;99m",
 ]
 
-_LOGO_W = max(len(l) for l in _LOGO_LINES)  # all lines same width; used for padding
-
 
 def print_banner(info_lines: list[str] = ()) -> None:
     """Print the ASCII logo with optional info lines shown to its right."""
+    try:
+        from src.config import get_ascii_style
+        style = get_ascii_style()
+    except Exception:
+        style = "default"
+
+    if style == "legacy":
+        logo_lines = _LEGACY_LOGO
+    elif style == "experimental":
+        logo_lines = _EXPERIMENTAL_LOGO
+    else:
+        logo_lines = _DEFAULT_LOGO
+
+    logo_w = max(len(l) for l in logo_lines)
+
     sep = f"  {DIM}\u2502{RESET}  "   # dim │
-    rows = max(len(_LOGO_LINES), len(info_lines))
+    rows = max(len(logo_lines), len(info_lines))
     print()
     for i in range(rows):
-        raw   = _LOGO_LINES[i] if i < len(_LOGO_LINES) else ""
+        raw   = logo_lines[i] if i < len(logo_lines) else ""
         info  = info_lines[i]  if i < len(info_lines)  else ""
         color = _LOGO_COLORS[i] if i < len(_LOGO_COLORS) else GREEN
-        logo  = f"{color}{raw.ljust(_LOGO_W)}{RESET}"
+        logo  = f"{color}{raw.ljust(logo_w)}{RESET}"
         print(f"{logo}{sep}{info}")
     print()
 
