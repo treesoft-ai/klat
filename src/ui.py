@@ -106,9 +106,35 @@ def prompt_input(label: str = "task") -> str:
         sys.exit(0)
 
 
+def strip_markdown(text: str) -> str:
+    """Strip bold, italic, and header markdown that looks bad in a plain terminal."""
+    import re
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        # Remove ATX headers: # / ## / ### (and any deeper) at the start of a line
+        line = re.sub(r"^#{1,6}\s+", "", line)
+        # Remove bold: **text** or __text__
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"__(.+?)__", r"\1", line)
+        # Remove italic: *text* or _text_ (but not inside words)
+        line = re.sub(r"(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"\1", line)
+        line = re.sub(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)", r"\1", line)
+        # Remove setext-style horizontal rules: lines that are only --- or ***
+        if re.match(r"^(\s*[-*]\s*){3,}$", line):
+            continue
+        # Remove markdown table rows: lines that start and end with |
+        if re.match(r"^\s*\|.*\|\s*$", line):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 def agent_print(text: str) -> None:
     """Print agent output with a green prefix."""
+    text = strip_markdown(text)
     print(f"{GREEN}·{RESET} {text}")
+
 
 
 def agent_thought(text: str) -> None:

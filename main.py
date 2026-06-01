@@ -279,13 +279,14 @@ def main() -> None:
     ]
     print_banner(info_lines)
 
+    _agent_busy = False
     while True:
         try:
             raw = prompt_input("you").strip()
             if not raw:
                 continue
 
-            # ── Exit ──────────────────────────────────────────────────────
+            # ── Exit ──────────────────────────────────────────────────────────
             if raw.lower() in {"exit", "quit", "q"}:
                 sys.exit(0)
 
@@ -313,12 +314,20 @@ def main() -> None:
                 continue
 
             # ── Chat ──────────────────────────────────────────────────────
+            _agent_busy = True
             agent.chat(raw)
+            _agent_busy = False
 
         except KeyboardInterrupt:
+            was_busy = _agent_busy
+            _agent_busy = False
             print()
-            sys.exit(0)
+            if was_busy:
+                agent_error("Stopped.")
+            else:
+                sys.exit(0)
         except Exception as e:
+            _agent_busy = False
             agent_error(str(e))
 
 

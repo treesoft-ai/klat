@@ -54,12 +54,11 @@ def _build_system_prompt() -> str:
         "e.g. 'hey! how can I help?' or 'doing well! what are we working on?'.\n\n"
         f"Working directory: {WORK_DIR}\n\n"
         "## Tools\n"
-        "- read_file(path, [start_line], [end_line])           — read a file or line range\n"
+        "- read_file(path, [start_line], [end_line])           — read a single file (with optional line range) or an array of paths\n"
         "- write_file(path, content)                           — create or overwrite a file\n"
         "- patch_file(path, start_line, end_line, new_content) — replace lines in-place\n"
         "- insert_lines(path, after_line, content)             — insert lines without replacing (after_line=0 to prepend)\n"
         "- replace_in_file(path, old_text, new_text, [count]) — find-and-replace by text; count=-1 for all occurrences\n"
-        "- read_many_files(paths, [max_bytes_each])            — read multiple files in one call\n"
         "- list_dir(path)                                      — list files and subdirectories\n"
         "- find_file(pattern, [path])                          — find files by name/glob pattern\n"
         "- tree([path], [max_depth], [show_hidden], [dirs_only]) — display directory tree (ALWAYS use this instead of run_command tree/find/ls for project layout)\n"
@@ -86,12 +85,16 @@ def _build_system_prompt() -> str:
         "- Prefer patch_file or replace_in_file over write_file for targeted edits to existing files.\n"
         "- Use replace_in_file when you know the exact text to change but not the line numbers. "
         "Use patch_file when you know the line range. Use insert_lines to add content without removing anything.\n"
-        "- ALWAYS use read_many_files when you need to read 2 or more files. "
-        "Never call read_file multiple times sequentially when read_many_files can do it in one shot.\n"
+        "- NEVER make multiple read_file tool calls in parallel (within the same turn) or sequentially. "
+        "If you need to read 2 or more files, you MUST make a single read_file call passing an array of paths. "
+        "Calling read_file multiple times in parallel or in separate turns is strictly prohibited.\n"
         "- ALWAYS use tree when the user asks for a directory tree, project structure, or layout. "
         "Never use run_command to call tree, find, ls, or dir for this purpose.\n"
         "- Keep responses short and factual. No unsolicited suggestions.\n"
         "- Use tools only when they are needed to answer the request.\n"
+        "- Plain text only. This is a terminal with no markdown renderer. "
+        "Never use bold (**text**), italic (*text* or _text_), headers (# ## ###), or tables (| col | col |). "
+        "Plain bullet lists with '- item' are fine. Code blocks are fine for actual code/command output.\n"
         f"{custom_rules_text}\n"
         "## Output Formatting\n"
         "Always format tool output consistently:\n"
@@ -99,7 +102,7 @@ def _build_system_prompt() -> str:
         "list each as `NAME: value`, note that sensitive values are masked.\n"
         "- list_dir / find_file: show directories first with trailing '/', then files. "
         "Use a plain list, no extra commentary.\n"
-        "- read_many_files: show each file under its === path === header, fenced as a code block for code files.\n"
+        "- read_file: when reading multiple files, show each file under its === path === header, fenced as a code block for code files. When reading a single file, show it fenced as a code block in the appropriate language.\n"
         "- search_files: show results as 'file:line: content', grouped by file.\n"
         "- process_list: present as a table with PID, Name, Status, Command columns.\n"
         "- diff_files: wrap the diff output in a ```diff code block.\n"
@@ -108,8 +111,7 @@ def _build_system_prompt() -> str:
         "plain text otherwise). Always include the exit code.\n"
         "- run_command: show stdout plainly, stderr under a [stderr] label, "
         "exit code on the last line as [exit code: N].\n"
-        "- File contents (read_file): show as a code block fenced with the file's language "
-        "when the content is code; plain text otherwise.\n"
+
         "- http_request: show status line first, then response body. "
         "Truncate large responses with a note of the total size."
     )
@@ -389,6 +391,84 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# History healing helpers for graceful interruptions
+# ---------------------------------------------------------------------------
+
+def heal_openai_messages(messages: list[dict]) -> None:
+    """Find any pending tool calls in the last assistant message and append error responses so the history remains valid."""
+    last_assistant = None
+    last_assistant_index = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "assistant" and messages[i].get("tool_calls"):
+            last_assistant = messages[i]
+            last_assistant_index = i
+            break
+            
+    if not last_assistant:
+        return
+        
+    tool_calls = last_assistant.get("tool_calls") or []
+    tool_call_ids = {tc["id"] for tc in tool_calls if "id" in tc}
+    
+    responded_ids = set()
+    for i in range(last_assistant_index + 1, len(messages)):
+        if messages[i].get("role") == "tool":
+            responded_ids.add(messages[i].get("tool_call_id"))
+            
+    for tc in tool_calls:
+        if "id" in tc:
+            tc_id = tc["id"]
+            if tc_id not in responded_ids:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": "Error: Interrupted by user (Stopped).",
+                })
+
+
+def heal_gemini_history(history: list) -> None:
+    """Find any pending function calls in the last model message and append FunctionResponse parts so the history remains valid."""
+    try:
+        from google.genai import types
+    except ImportError:
+        return
+
+    last_model = None
+    last_model_index = -1
+    for i in range(len(history) - 1, -1, -1):
+        if history[i].role == "model" and history[i].parts and any(getattr(p, "function_call", None) for p in history[i].parts if p):
+            last_model = history[i]
+            last_model_index = i
+            break
+            
+    if not last_model:
+        return
+        
+    has_response = False
+    for i in range(last_model_index + 1, len(history)):
+        if history[i].role == "user" and history[i].parts and any(getattr(p, "function_response", None) for p in history[i].parts if p):
+            has_response = True
+            break
+            
+    if has_response:
+        return
+        
+    result_parts = []
+    for p in last_model.parts:
+        if getattr(p, "function_call", None):
+            result_parts.append(types.Part(
+                function_response=types.FunctionResponse(
+                    name=p.function_call.name,
+                    response={"result": "Error: Interrupted by user (Stopped)."},
+                )
+            ))
+            
+    if result_parts:
+        history.append(types.Content(role="user", parts=result_parts))
+
+
+# ---------------------------------------------------------------------------
 # Public agent class
 # ---------------------------------------------------------------------------
 
@@ -405,18 +485,24 @@ class KlatAgent:
         """Send a message, run any tool calls, and print the final reply."""
         provider = get_provider(current_provider())
 
-        if provider["backend"] == "gemini":
-            reply = _run_gemini(
-                message,
-                self._gemini_history,
-                self._project,
-                self._location,
-            )
-        else:
-            reply = _run_openai_compat(message, self._openai_messages)
+        try:
+            if provider["backend"] == "gemini":
+                reply = _run_gemini(
+                    message,
+                    self._gemini_history,
+                    self._project,
+                    self._location,
+                )
+            else:
+                reply = _run_openai_compat(message, self._openai_messages)
 
-        if reply:
-            ui.agent_print(reply)
+            if reply:
+                ui.agent_print(reply)
+        except BaseException:
+            # Heal conversation history to keep it valid/uncorrupted without forgetting
+            heal_openai_messages(self._openai_messages)
+            heal_gemini_history(self._gemini_history)
+            raise
 
     def refresh_system_prompt(self) -> None:
         """Refresh the system prompt inside the session history."""

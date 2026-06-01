@@ -21,24 +21,28 @@ TOOL_DECLARATIONS = [
     {
         "name": "read_file",
         "description": (
-            "Read a file's contents. Optionally restrict to a line range by providing "
-            "start_line and/or end_line (1-indexed, inclusive). "
-            "Returns the file contents (or the requested slice) as a string."
+            "Read one or more files. "
+            "Pass a single file path string to read one file, or an array of file path strings to read multiple files at once. "
+            "For a single file, you may also specify start_line and end_line to read a specific line range. "
+            "When reading multiple files, returns a combined result where each file is clearly separated under its own '=== path ===' header line."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {
-                    "type": "string",
-                    "description": "Absolute or relative path to the file.",
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                    "description": "A single file path (string) or a list of file paths (array) to read multiple files at once.",
                 },
                 "start_line": {
                     "type": "integer",
-                    "description": "First line to return (1-indexed). Omit to start from the beginning.",
+                    "description": "First line to return (1-indexed). Single-file reads only.",
                 },
                 "end_line": {
                     "type": "integer",
-                    "description": "Last line to return (1-indexed, inclusive). Omit to read to end of file.",
+                    "description": "Last line to return (1-indexed, inclusive). Single-file reads only.",
                 },
             },
             "required": ["path"],
@@ -430,29 +434,7 @@ TOOL_DECLARATIONS = [
             "required": ["path", "after_line", "content"],
         },
     },
-    {
-        "name": "read_many_files",
-        "description": (
-            "Read multiple files in a single call. "
-            "Returns a mapping of path → contents for each file. "
-            "Use this instead of multiple read_file calls when you need several files at once."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "paths": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of absolute or relative file paths to read.",
-                },
-                "max_bytes_each": {
-                    "type": "integer",
-                    "description": "Truncate each file at this many bytes. Defaults to 32768 (32 KB).",
-                },
-            },
-            "required": ["paths"],
-        },
-    },
+
     {
         "name": "replace_in_file",
         "description": (
@@ -533,7 +515,25 @@ def _resolve(path: str) -> Path:
 # Implementations
 # ---------------------------------------------------------------------------
 
-def _read_file(path: str, start_line: int | None, end_line: int | None) -> str:
+def _read_file(path: str | list[str], start_line: int | None = None, end_line: int | None = None) -> str:
+    if isinstance(path, list):
+        results: list[str] = []
+        for raw_path in path:
+            p = _resolve(raw_path)
+            header = f"=== {raw_path} ==="
+            if not p.exists():
+                results.append(f"{header}\nError: not found\n")
+                continue
+            if not p.is_file():
+                results.append(f"{header}\nError: not a file\n")
+                continue
+            try:
+                content = p.read_text(encoding="utf-8", errors="replace")
+                results.append(f"{header}\n{content}\n")
+            except Exception as e:
+                results.append(f"{header}\nError reading file: {e}\n")
+        return "\n".join(results) if results else "(no files requested)"
+
     p = _resolve(path)
     if not p.exists():
         return f"Error: not found: {p}"
@@ -939,28 +939,6 @@ def _insert_lines(path: str, after_line: int, content: str) -> str:
         return f"Error inserting into {p}: {e}"
 
 
-def _read_many_files(paths: list[str], max_bytes_each: int = 32768) -> str:
-    results: list[str] = []
-    for raw_path in paths:
-        p = _resolve(raw_path)
-        header = f"=== {raw_path} ==="
-        if not p.exists():
-            results.append(f"{header}\nError: not found\n")
-            continue
-        if not p.is_file():
-            results.append(f"{header}\nError: not a file\n")
-            continue
-        try:
-            raw = p.read_bytes()
-            truncated = len(raw) > max_bytes_each
-            text = raw[:max_bytes_each].decode("utf-8", errors="replace")
-            if truncated:
-                text += f"\n... (truncated at {max_bytes_each} bytes; total {len(raw)} bytes)"
-            results.append(f"{header}\n{text}\n")
-        except Exception as e:
-            results.append(f"{header}\nError reading file: {e}\n")
-    return "\n".join(results) if results else "(no files requested)"
-
 
 def _replace_in_file(path: str, old_text: str, new_text: str, count: int = 1) -> str:
     p = _resolve(path)
@@ -1040,7 +1018,7 @@ def get_all_tool_declarations() -> list[dict]:
 
 def dispatch(name: str, args: dict) -> str:
     try:
-        if name == "read_file":
+        if name in ("read_file", "read_file_slice"):
             return _read_file(
                 args["path"],
                 args.get("start_line"),
@@ -1112,11 +1090,7 @@ def dispatch(name: str, args: dict) -> str:
                 int(args["after_line"]),
                 args["content"],
             )
-        if name == "read_many_files":
-            return _read_many_files(
-                args["paths"],
-                int(args.get("max_bytes_each", 32768)),
-            )
+
         if name == "replace_in_file":
             return _replace_in_file(
                 args["path"],
