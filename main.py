@@ -253,10 +253,10 @@ def main() -> None:
     p = get_provider(current_provider())
     info_lines = [
         "",
-        f"{DIM}{ui.BANNER_SUBTITLE}  ·  by TreeSoft{RESET}",
-        f"{DIM}extensions{RESET}  {GREEN}{ext_text}{RESET}",
-        f"{DIM}provider{RESET}    {GREEN}{current_provider()}{RESET}",
-        f"{DIM}model{RESET}       {GREEN}{current_model()}{RESET}",
+        f"{DIM}{ui.BANNER_SUBTITLE}{RESET}   {ui.colorize_gradient('TreeSoft')}",
+        f"{DIM}extensions{RESET}  {ui.colorize_gradient(ext_text)}",
+        f"{DIM}provider{RESET}    {ui.colorize_gradient(current_provider())}",
+        f"{DIM}model{RESET}       {ui.colorize_gradient(current_model())}",
     ]
     print_banner(info_lines)
 
