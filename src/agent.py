@@ -24,6 +24,22 @@ from src.tools import TOOL_DECLARATIONS, WORK_DIR, dispatch
 # ---------------------------------------------------------------------------
 
 def _build_system_prompt() -> str:
+    # Gather dynamic tools
+    try:
+        from src.extensions import DYNAMIC_TOOLS, CUSTOM_RULES
+        dynamic_tools_text = ""
+        for name, info in DYNAMIC_TOOLS.items():
+            desc = info["declaration"]["description"]
+            desc_line = desc.split("\n")[0]
+            dynamic_tools_text += f"- {name} — {desc_line}\n"
+
+        custom_rules_text = ""
+        for rule in CUSTOM_RULES:
+            custom_rules_text += f"- {rule}\n"
+    except ImportError:
+        dynamic_tools_text = ""
+        custom_rules_text = ""
+
     return (
         "You are Klat, a software engineering assistant running in the terminal.\n\n"
         "## Personality\n"
@@ -52,7 +68,8 @@ def _build_system_prompt() -> str:
         "- move_file(source, destination)                      — move or rename a file\n"
         "- delete_file(path)                                   — delete a file\n"
         "- env_var(names)                                      — read environment variables\n"
-        "- process_list([filter])                              — list running processes\n\n"
+        "- process_list([filter])                              — list running processes\n"
+        f"{dynamic_tools_text}\n"
         "## Rules\n"
         "- Tool results are ground truth. Report exactly what they return — never paraphrase, "
         "embellish, or second-guess them.\n"
@@ -62,7 +79,8 @@ def _build_system_prompt() -> str:
         "first, both were correct at the time. State this plainly, do not call it an 'issue'.\n"
         "- Prefer patch_file over write_file for targeted edits to existing files.\n"
         "- Keep responses short and factual. No unsolicited suggestions.\n"
-        "- Use tools only when they are needed to answer the request.\n\n"
+        "- Use tools only when they are needed to answer the request.\n"
+        f"{custom_rules_text}\n"
         "## Output Formatting\n"
         "Always format tool output consistently:\n"
         "- env_var: group variables by category (System, Path, Application-specific, etc.), "
@@ -81,6 +99,13 @@ def _build_system_prompt() -> str:
     )
 
 SYSTEM_PROMPT = _build_system_prompt()
+
+
+def rebuild_system_prompt() -> None:
+    """Rebuild the global system prompt to include loaded extension tools and rules."""
+    global SYSTEM_PROMPT
+    SYSTEM_PROMPT = _build_system_prompt()
+
 
 
 # ---------------------------------------------------------------------------
@@ -123,13 +148,14 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
             )
         client = genai.Client(api_key=api_key)
 
+    from src.tools import get_all_tool_declarations
     declarations = [
         types.FunctionDeclaration(
             name=d["name"],
             description=d["description"],
             parameters=d["parameters"],
         )
-        for d in TOOL_DECLARATIONS
+        for d in get_all_tool_declarations()
     ]
     tools = [types.Tool(function_declarations=declarations)]
 
@@ -183,17 +209,19 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
 # OpenAI-compatible backend
 # ---------------------------------------------------------------------------
 
-_OPENAI_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": d["name"],
-            "description": d["description"],
-            "parameters": d["parameters"],
-        },
-    }
-    for d in TOOL_DECLARATIONS
-]
+def _get_openai_tools() -> list[dict]:
+    from src.tools import get_all_tool_declarations
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": d["name"],
+                "description": d["description"],
+                "parameters": d["parameters"],
+            },
+        }
+        for d in get_all_tool_declarations()
+    ]
 
 
 def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
@@ -218,7 +246,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=_OPENAI_TOOLS,
+            tools=_get_openai_tools(),
             tool_choice="auto",
         )
 
@@ -275,6 +303,11 @@ class KlatAgent:
 
         if reply:
             ui.agent_print(reply)
+
+    def refresh_system_prompt(self) -> None:
+        """Refresh the system prompt inside the session history."""
+        if self._openai_messages and self._openai_messages[0]["role"] == "system":
+            self._openai_messages[0]["content"] = SYSTEM_PROMPT
 
     def reset(self) -> None:
         """Clear conversation history."""

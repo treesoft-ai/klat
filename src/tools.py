@@ -709,6 +709,13 @@ def _process_list(filter_str: str | None = None) -> str:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+def get_all_tool_declarations() -> list[dict]:
+    """Combine static built-in tool declarations with dynamic extension tools."""
+    from src.extensions import DYNAMIC_TOOLS
+    dynamic_decls = [info["declaration"] for info in DYNAMIC_TOOLS.values()]
+    return TOOL_DECLARATIONS + dynamic_decls
+
+
 def dispatch(name: str, args: dict) -> str:
     try:
         if name == "read_file":
@@ -769,8 +776,18 @@ def dispatch(name: str, args: dict) -> str:
             return _env_var(args["names"])
         if name == "process_list":
             return _process_list(args.get("filter"))
+
+        # Check dynamic tools
+        from src.extensions import DYNAMIC_TOOLS
+        if name in DYNAMIC_TOOLS:
+            handler = DYNAMIC_TOOLS[name]["handler"]
+            return str(handler(**args))
+
         return f"Unknown tool: {name}"
     except KeyError as e:
         return f"Error: missing required argument {e}"
+    except TypeError as e:
+        return f"Error: bad tool arguments: {e}"
     except Exception as e:
         return f"Error in {name}: {e}"
+
