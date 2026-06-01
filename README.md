@@ -1,6 +1,6 @@
 # 🌿 Klat — "The greenest, yet powerful SWE Agent"
 
-Klat is simply the only SWE Agent you'll ever need. It's easy to get started, and as easy to master. Made by TreeSoft, for **everyone**.
+Klat is simply the only SWE Agent you'll ever need. It's easy to get started, and as easy to master. Made by TreeSoft, for **everyone** (developers or future ones).
 
 ## Setup
 
