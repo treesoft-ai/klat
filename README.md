@@ -85,3 +85,8 @@ When Klat loads an extension, it provides a virtual `klat` module. Through this 
 1. **Development**: Create a folder with your `manifest.json` schemas and `main.py` entrypoint handlers.
 2. **Packaging**: Run `/extension export /path/to/folder` inside Klat to validate and bundle the files into a single `.ke` archive.
 3. **Activation**: Load the tool using `/extension import /path/to/file.ke`. Once approved via the safety prompt, all new tools, features and rules become active instantly.
+
+## Roadmap
+
+* **Node.js Transition**: Porting the core architecture to Node.js to align with industry standards for modern, asynchronous SWE agents and tap into a broader ecosystem of developer tools.
+* **VS Code Integration**: Developing a native VS Code extension to bring Klat's full agentic capabilities, interactive tools, and hot-loading system directly into the editor where you write your code.
