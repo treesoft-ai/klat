@@ -38,9 +38,25 @@ ENV_FILE = ENV_DIR / ".env"
 _state: dict = {
     "provider": None,   # None until ensure_env() resolves one
     "model":    None,   # None → use provider's default_model
+    "reasoning": "none",
 }
 
 _config: dict[str, str] = {}
+
+
+def current_reasoning() -> str:
+    return _state["reasoning"]
+
+
+def set_reasoning(value: str) -> None:
+    """Set and persist the reasoning configuration level."""
+    val = value.strip().lower()
+    allowed = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    if val not in allowed:
+        raise ValueError(f"Invalid reasoning level. Choose from: {', '.join(sorted(allowed))}")
+    _state["reasoning"] = val
+    _persist()
+
 
 
 def current_provider() -> str:
@@ -74,7 +90,7 @@ def set_model(model: str) -> None:
 
 
 def _persist() -> None:
-    """Write provider & model back to config.json."""
+    """Write provider, model & reasoning back to config.json."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     current_data = {}
     if CONFIG_FILE.exists():
@@ -85,6 +101,7 @@ def _persist() -> None:
             pass
     current_data["provider"] = _state["provider"] or ""
     current_data["model"] = _state["model"] or ""
+    current_data["reasoning"] = _state["reasoning"] or "none"
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, indent=2)
@@ -260,14 +277,17 @@ def ensure_env() -> tuple[str, str]:
 
     _load_config()
 
-    # Restore persisted provider / model choice
+    # Restore persisted provider / model / reasoning choice
     saved_provider = _config.get("provider", "").strip()
     saved_model    = _config.get("model", "").strip()
+    saved_reasoning = _config.get("reasoning", "none").strip().lower()
 
     if saved_provider and saved_provider in PROVIDERS:
         _state["provider"] = saved_provider
     if saved_model:
         _state["model"] = saved_model
+    if saved_reasoning in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+        _state["reasoning"] = saved_reasoning
 
     # Find the best available provider
     available = configured_providers()

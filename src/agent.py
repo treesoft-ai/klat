@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 from src import ui
-from src.config import current_provider, current_model
+from src.config import current_provider, current_model, current_reasoning
 from src.providers import PROVIDERS, get_provider
 from src.tools import TOOL_DECLARATIONS, WORK_DIR, dispatch
 
@@ -159,6 +159,31 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
     ]
     tools = [types.Tool(function_declarations=declarations)]
 
+    reasoning = current_reasoning().lower()
+    thinking_config = None
+    if reasoning != "none":
+        is_gemini_3 = "3." in model or "3-" in model
+        if is_gemini_3:
+            thinking_config = types.ThinkingConfig(
+                thinking_level=reasoning
+            )
+        else:
+            budget_map = {
+                "minimal": 1024,
+                "low": 2048,
+                "medium": 4096,
+                "high": 8192,
+                "xhigh": 16384
+            }
+            budget = budget_map.get(reasoning, -1)
+            thinking_config = types.ThinkingConfig(
+                thinking_budget=budget
+            )
+    elif "2.5-flash" in model.lower():
+        thinking_config = types.ThinkingConfig(
+            thinking_budget=0
+        )
+
     history.append(types.Content(role="user", parts=[types.Part(text=message)]))
 
     while True:
@@ -168,6 +193,7 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 tools=tools,
+                thinking_config=thinking_config,
             ),
         )
 
@@ -175,6 +201,11 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
             role="model",
             parts=response.candidates[0].content.parts,
         ))
+
+        # Print any thoughts first
+        for p in response.candidates[0].content.parts:
+            if getattr(p, "thought", False) and p.text:
+                ui.agent_thought(p.text)
 
         fn_calls = [
             p.function_call
@@ -185,7 +216,9 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
         if not fn_calls:
             parts = []
             for p in response.candidates[0].content.parts:
-                if hasattr(p, "text") and p.text:
+                if getattr(p, "thought", False):
+                    continue
+                elif hasattr(p, "text") and p.text:
                     parts.append(p.text)
             return " ".join(parts).strip()
 
@@ -239,23 +272,88 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
             f"Add it to env/.env to use {provider['display_name']}."
         )
 
+    reasoning = current_reasoning().lower()
+    extra_params = {}
+    if provider_name == "openrouter":
+        extra_params["extra_body"] = {
+            "reasoning": {
+                "effort": reasoning
+            }
+        }
+    elif reasoning != "none":
+        if provider_name == "openai":
+            openai_effort = "medium"
+            if reasoning in ("minimal", "low"):
+                openai_effort = "low"
+            elif reasoning == "medium":
+                openai_effort = "medium"
+            elif reasoning in ("high", "xhigh"):
+                openai_effort = "high"
+            extra_params["reasoning_effort"] = openai_effort
+
     client = OpenAI(base_url=provider["base_url"], api_key=api_key)
     messages.append({"role": "user", "content": message})
 
     while True:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=_get_openai_tools(),
-            tool_choice="auto",
-        )
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=_get_openai_tools(),
+                tool_choice="auto",
+                **extra_params
+            )
+        except Exception as e:
+            if extra_params:
+                err_msg = str(e).lower()
+                if "mandatory" in err_msg or "cannot be disabled" in err_msg:
+                    ui.agent_step("reasoning", "Mandatory for this model; using defaults")
+                elif "unexpected keyword argument" in err_msg or "extra_body" in err_msg or "extra_params" in err_msg:
+                    ui.agent_step("reasoning-fallback", "Not supported by this model; retrying")
+                else:
+                    ui.agent_step("reasoning-fallback", "Unsupported or error encountered; retrying")
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=_get_openai_tools(),
+                    tool_choice="auto"
+                )
+            else:
+                raise e
 
         choice  = response.choices[0]
         message_obj = choice.message
+        
+        # Extract thoughts
+        thought = ""
+        content = message_obj.content or ""
+        
+        if getattr(message_obj, "reasoning_content", None):
+            thought = message_obj.reasoning_content
+        elif getattr(message_obj, "reasoning", None):
+            thought = message_obj.reasoning
+        elif hasattr(message_obj, "model_extra") and message_obj.model_extra:
+            thought = message_obj.model_extra.get("reasoning") or message_obj.model_extra.get("reasoning_content")
+        elif isinstance(message_obj, dict):
+            thought = message_obj.get("reasoning_content") or message_obj.get("reasoning")
+            
+        import re
+        think_match = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
+        if think_match:
+            thought = think_match.group(1).strip()
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+            try:
+                message_obj.content = content
+            except Exception:
+                pass
+        
+        if thought:
+            ui.agent_thought(thought)
+
         messages.append(message_obj.model_dump(exclude_unset=True))
 
         if not message_obj.tool_calls:
-            return (message_obj.content or "").strip()
+            return content.strip()
 
         for tc in message_obj.tool_calls:
             name = tc.function.name

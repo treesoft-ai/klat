@@ -3,7 +3,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 """
 
 import sys
-from src.config import ensure_env, current_provider, current_model, set_provider, set_model
+from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
 from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
@@ -65,6 +65,22 @@ def _cmd_model(args: str) -> None:
 
     set_model(name)
     agent_print(f"Model set to {GREEN}{name}{RESET}")
+
+
+def _cmd_reasoning(args: str) -> None:
+    """Handle /reasoning [level] — show or change the reasoning level."""
+    val = args.strip()
+
+    if not val:
+        print(f"\n  Reasoning Level: {GREEN}{current_reasoning().capitalize()}{RESET}\n")
+        return
+
+    try:
+        set_reasoning(val)
+        agent_print(f"Reasoning set to {GREEN}{current_reasoning().capitalize()}{RESET}")
+    except ValueError as e:
+        agent_error(str(e))
+        print("  Available levels: None, Minimal, Low, Medium, High, XHigh\n")
 
 
 def _cmd_extension(args: str, agent: KlatAgent) -> None:
@@ -193,6 +209,8 @@ def _cmd_help() -> None:
   /provider <name>       switch active provider
   /model                 show current model
   /model <name>          set model for this session
+  /reasoning             show current reasoning level
+  /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
   /extension             extension manager options
   /extension list        list installed extensions
   /extension export <d>  export a folder into a .ke file
@@ -257,6 +275,7 @@ def main() -> None:
         f"{DIM}extensions{RESET}  {ui.colorize_gradient(ext_text)}",
         f"{DIM}provider{RESET}    {ui.colorize_gradient(current_provider())}",
         f"{DIM}model{RESET}       {ui.colorize_gradient(current_model())}",
+        f"{DIM}reasoning{RESET}   {ui.colorize_gradient(current_reasoning())}",
     ]
     print_banner(info_lines)
 
@@ -280,6 +299,8 @@ def main() -> None:
                     _cmd_provider(remainder)
                 elif cmd == "model":
                     _cmd_model(remainder)
+                elif cmd == "reasoning":
+                    _cmd_reasoning(remainder)
                 elif cmd == "extension":
                     _cmd_extension(remainder, agent)
                 elif cmd in {"help", "?"}:

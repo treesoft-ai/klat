@@ -111,6 +111,16 @@ def agent_print(text: str) -> None:
     print(f"{GREEN}·{RESET} {text}")
 
 
+def agent_thought(text: str) -> None:
+    """Print agent internal thought/reasoning in a dim, italic style."""
+    if not text.strip():
+        return
+    print(f"  {DIM}⌁ thinking...{RESET}")
+    for line in text.strip().split("\n"):
+        print(f"    {DIM}\033[3m{line}{RESET}")
+
+
+
 def agent_step(action: str, detail: str = "") -> None:
     """Print a single agent action step."""
     detail_str = f"  {DIM}{detail}{RESET}" if detail else ""
