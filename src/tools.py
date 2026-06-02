@@ -496,6 +496,54 @@ TOOL_DECLARATIONS = [
             "required": [],
         },
     },
+    {
+        "name": "fetch_ai_models",
+        "description": "Fetch, filter, sort, and paginate the list of available AI models from OpenRouter.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "search": {
+                    "type": "string",
+                    "description": "Search term to match model ID or name (case-insensitive)."
+                },
+                "provider": {
+                    "type": "string",
+                    "description": "Filter by provider name (e.g., 'anthropic', 'openai', 'google', 'deepseek')."
+                },
+                "min_context_length": {
+                    "type": "integer",
+                    "description": "Minimum context length in tokens."
+                },
+                "modality": {
+                    "type": "string",
+                    "description": "Required input modality (e.g., 'image', 'audio', 'video', 'file')."
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["created", "context_length", "pricing", "name"],
+                    "description": "Field to sort models by. Defaults to 'created' (to show the latest models first)."
+                },
+                "sort_order": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "description": "Sort order. Defaults to 'desc' for created/context_length/pricing, and 'asc' for name."
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "Page number to fetch (1-indexed). Defaults to 1."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of models to return per page. Defaults to 15."
+                },
+                "include_latest": {
+                    "type": "boolean",
+                    "description": "Whether to include auto-redirecting latest router models (e.g., ID starting with '~' or ending/containing 'latest'). Defaults to false."
+                }
+            },
+            "required": []
+        }
+    }
 ]
 
 
@@ -1005,6 +1053,191 @@ def _tree(
     return "\n".join(lines)
 
 
+def _fetch_ai_models(
+    search: str | None = None,
+    provider: str | None = None,
+    min_context_length: int | None = None,
+    modality: str | None = None,
+    sort_by: str = "created",
+    sort_order: str | None = None,
+    page: int = 1,
+    limit: int = 15,
+    include_latest: bool = False,
+) -> str:
+    import json
+    import urllib.request
+    import urllib.error
+    from datetime import datetime, timezone
+
+    # Fetch models from OpenRouter
+    url = "https://openrouter.ai/api/v1/models"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Klat-Agent/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return f"Error fetching models: HTTP {e.code} {e.reason}"
+    except Exception as e:
+        return f"Error fetching models: {e}"
+
+    models = data.get("data", [])
+    if not models:
+        return "No models returned from API."
+
+    # Client-side filtering
+    filtered_models = []
+    for m in models:
+        # 1. Search term match
+        if search:
+            s_term = search.lower()
+            m_id = m.get("id", "").lower()
+            m_name = m.get("name", "").lower()
+            if s_term not in m_id and s_term not in m_name:
+                continue
+
+        # 2. Provider match
+        if provider:
+            p_term = provider.lower()
+            m_id = m.get("id", "").lower()
+            m_name = m.get("name", "").lower()
+            parts = m_id.split("/")
+            provider_part = parts[0] if parts else ""
+            
+            # Check ID prefix or provider part in the ID
+            if p_term not in provider_part and p_term not in m_name:
+                continue
+
+        # 3. Min context length
+        if min_context_length is not None:
+            ctx_len = m.get("context_length", 0)
+            if ctx_len is None or ctx_len < min_context_length:
+                continue
+
+        # 4. Modality match
+        if modality:
+            mod_term = modality.lower()
+            input_mods = m.get("architecture", {}).get("input_modalities", [])
+            input_mods_lower = [str(im).lower() for im in input_mods] if input_mods else []
+            mod_str = m.get("architecture", {}).get("modality", "").lower()
+            if mod_term not in input_mods_lower and mod_term not in mod_str:
+                continue
+
+        # 5. Exclude auto-redirecting latest router models unless asked
+        if not include_latest:
+            m_id = m.get("id", "")
+            is_router_latest = m_id.startswith("~") or m_id.endswith("latest") or "-latest" in m_id or ":latest" in m_id
+            if is_router_latest:
+                continue
+
+        filtered_models.append(m)
+
+    # Resolve default sort order based on sort_by
+    if not sort_order:
+        if sort_by == "name":
+            sort_order = "asc"
+        else:
+            sort_order = "desc"
+
+    # Client-side sorting
+    reverse = (sort_order == "desc")
+    
+    def sort_key(model):
+        if sort_by == "created":
+            return int(model.get("created") or 0)
+        elif sort_by == "context_length":
+            return int(model.get("context_length") or 0)
+        elif sort_by == "pricing":
+            try:
+                return float(model.get("pricing", {}).get("prompt") or 0.0)
+            except Exception:
+                return 0.0
+        elif sort_by == "name":
+            return model.get("name", "").lower()
+        return 0
+
+    filtered_models.sort(key=sort_key, reverse=reverse)
+
+    total_matched = len(filtered_models)
+    if total_matched == 0:
+        return "No models matched the specified filters."
+
+    # Pagination
+    page = max(1, page)
+    limit = max(1, limit)
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    sliced_models = filtered_models[start_idx:end_idx]
+
+    if not sliced_models:
+        return f"Page {page} is out of range. Total matched models: {total_matched}."
+
+    total_pages = (total_matched + limit - 1) // limit
+
+    lines = []
+    lines.append(f"Found {total_matched} matching model(s). Showing page {page} of {total_pages} (models {start_idx + 1}-{min(end_idx, total_matched)}).")
+    lines.append("-" * 80)
+
+    for m in sliced_models:
+        m_id = m.get("id", "unknown")
+        m_name = m.get("name", "Unknown Name")
+        
+        # Created Date
+        created_ts = m.get("created")
+        created_date = "N/A"
+        if created_ts:
+            try:
+                created_date = datetime.fromtimestamp(created_ts, tz=timezone.utc).strftime('%Y-%m-%d')
+            except Exception:
+                pass
+                
+        ctx_len = m.get("context_length")
+        ctx_str = f"{ctx_len:,} tokens" if ctx_len is not None else "N/A"
+        
+        # Modalities
+        input_mods = m.get("architecture", {}).get("input_modalities")
+        mod_str = ", ".join(input_mods) if input_mods else "text"
+        
+        # Pricing per million tokens
+        pricing = m.get("pricing", {})
+        prompt_price_raw = pricing.get("prompt")
+        completion_price_raw = pricing.get("completion")
+        
+        try:
+            p_price = float(prompt_price_raw) * 1_000_000 if prompt_price_raw is not None else None
+            c_price = float(completion_price_raw) * 1_000_000 if completion_price_raw is not None else None
+            if p_price is not None and c_price is not None:
+                pricing_str = f"Prompt: ${p_price:.4f}/M, Completion: ${c_price:.4f}/M"
+            elif p_price is not None:
+                pricing_str = f"Prompt: ${p_price:.4f}/M"
+            else:
+                pricing_str = "Free" if prompt_price_raw == "0" else "Unknown pricing"
+        except Exception:
+            pricing_str = "Unknown pricing"
+
+        lines.append(f"Model: {m_name}")
+        lines.append(f"  ID: {m_id}")
+        lines.append(f"  Created: {created_date} | Context: {ctx_str} | Input: {mod_str}")
+        lines.append(f"  Pricing: {pricing_str}")
+        
+        desc = m.get("description", "").strip()
+        if desc:
+            first_line = desc.split("\n")[0]
+            if len(first_line) > 120:
+                first_line = first_line[:117] + "..."
+            lines.append(f"  Description: {first_line}")
+            
+        cutoff = m.get("knowledge_cutoff")
+        if cutoff:
+            lines.append(f"  Knowledge Cutoff: {cutoff}")
+            
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -1104,6 +1337,18 @@ def dispatch(name: str, args: dict) -> str:
                 int(args.get("max_depth", 4)),
                 bool(args.get("show_hidden", False)),
                 bool(args.get("dirs_only", False)),
+            )
+        if name == "fetch_ai_models":
+            return _fetch_ai_models(
+                search=args.get("search"),
+                provider=args.get("provider"),
+                min_context_length=args.get("min_context_length"),
+                modality=args.get("modality"),
+                sort_by=args.get("sort_by", "created"),
+                sort_order=args.get("sort_order"),
+                page=int(args.get("page", 1)),
+                limit=int(args.get("limit", 15)),
+                include_latest=bool(args.get("include_latest", False)),
             )
 
         # Check dynamic tools
