@@ -152,6 +152,8 @@ TOOL_DECLARATIONS = [
         "name": "run_command",
         "description": (
             "Run a shell command and return its output. "
+            "WARNING: Do NOT use this tool to execute any git commands (status, log, diff, etc.). "
+            "For all git operations, you MUST use the specialized 'git' tool instead. "
             "Commands run in the working directory by default. "
             "Returns stdout, stderr, and the exit code."
         ),
