@@ -52,6 +52,7 @@ You can run commands during a chat session to configure settings or manage exten
 * `/model` — Show the active model
 * `/model <name>` — Switch to a specific model
 * `/extension list` — Show installed extensions
+* `/extension create <name>` — Generate a boilerplate extension directory
 * `/extension export <folder>` — Bundle a directory into a `.ke` file
 * `/extension import <path>` — Install and load a `.ke` extension
 * `/extension enable <name>` — Enable an extension

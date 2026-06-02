@@ -123,6 +123,7 @@ if HAS_PROMPT_TOOLKIT:
                 "/model",
                 "/reasoning",
                 "/extension list",
+                "/extension create",
                 "/extension export",
                 "/extension import",
                 "/extension enable",

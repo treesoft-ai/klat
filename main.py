@@ -10,7 +10,8 @@ from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, 
 from src.agent import KlatAgent
 from src.extensions import (
     load_extensions, export_extension, import_extension,
-    list_extensions, enable_extension, disable_extension, remove_extension
+    list_extensions, enable_extension, disable_extension, remove_extension,
+    create_extension
 )
 
 
@@ -84,12 +85,13 @@ def _cmd_reasoning(args: str) -> None:
 
 
 def _cmd_extension(args: str, agent: KlatAgent) -> None:
-    """Handle /extension subcommands: list, export, import, enable, disable, remove"""
+    """Handle /extension subcommands: list, export, import, enable, disable, remove, create"""
     parts = args.strip().split(None, 1)
     if not parts:
         print(f"\n  {GREEN}Klat Extension Management{RESET}")
         print("  ─────────────────────────────────────────────────────")
         print("  /extension list                 list installed extensions")
+        print("  /extension create <folder>      generate boilerplate extension folder")
         print("  /extension export <folder>      export folder into a .ke file")
         print("  /extension import <file.ke>     import and hot-load a .ke file")
         print("  /extension enable <name>        enable an extension")
@@ -118,6 +120,16 @@ def _cmd_extension(args: str, agent: KlatAgent) -> None:
             if e["description"]:
                 print(f"    {DIM}{e['description']}{RESET}")
         print("  ─────────────────────────────────────────────────────\n")
+
+    elif subcmd == "create":
+        if not remainder:
+            agent_error("Usage: /extension create <folder-path>")
+            return
+        try:
+            path = create_extension(remainder)
+            agent_print(f"Boilerplate extension created at: {GREEN}{path}{RESET}")
+        except Exception as e:
+            agent_error(f"Failed to create extension: {e}")
 
     elif subcmd == "export":
         if not remainder:
@@ -365,6 +377,7 @@ def _cmd_help() -> None:
   /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
   /extension             extension manager options
   /extension list        list installed extensions
+  /extension create <d>  generate a boilerplate extension folder
   /extension export <d>  export a folder into a .ke file
   /extension import <f>  import and hot-load a .ke extension file
   /extension enable <n>  enable a disabled extension

@@ -61,6 +61,71 @@ sys.modules["klat"] = klat_mod
 EXTENSIONS_DIR = Path.home() / ".klat" / "extensions"
 
 
+# Create extension
+# ---------------------------------------------------------------------------
+
+def create_extension(folder_path_str: str) -> str:
+    """Generate a boilerplate extension directory containing manifest.json and main.py."""
+    folder_path = Path(folder_path_str).resolve()
+    if folder_path.exists():
+        if any(folder_path.iterdir() if folder_path.is_dir() else ()):
+            raise FileExistsError(f"Destination folder already exists and is not empty: {folder_path_str}")
+    
+    # Extract standard name from path
+    ext_name = folder_path.name
+    # Strip any invalid extension characters just in case
+    clean_name = "".join(c for c in ext_name if c.isalnum() or c in "_-")
+    if not clean_name:
+        clean_name = "my_extension"
+        
+    folder_path.mkdir(parents=True, exist_ok=True)
+    
+    manifest_path = folder_path / "manifest.json"
+    main_path = folder_path / "main.py"
+    
+    manifest_data = {
+        "name": clean_name,
+        "version": "1.0.0",
+        "description": f"Boilerplate extension for {clean_name}",
+        "tools": [
+            {
+                "name": f"{clean_name}_hello",
+                "description": "A starter hello world tool for this extension",
+                "entrypoint": "hello_world",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the person to greet"
+                        }
+                    },
+                    "required": ["name"]
+                }
+            }
+        ]
+    }
+    
+    main_code = f'''"""
+Boilerplate logic for extension: {clean_name}
+"""
+import klat
+
+def hello_world(name: str) -> str:
+    """
+    Greets the user and demonstrates virtual SDK logging and UI outputs.
+    """
+    klat.log(f"hello_world tool executed for name: {{name}}")
+    klat.ui.print_accent(f"Greeting {{name}} from the {clean_name} extension!")
+    return f"Hello, {{name}}! Welcome to the {clean_name} extension."
+'''
+    
+    manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+    main_path.write_text(main_code, encoding="utf-8")
+    
+    return str(folder_path)
+
+
 # Export extension
 # ---------------------------------------------------------------------------
 
