@@ -602,7 +602,7 @@ class KlatAgent:
         self._openai_messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
         ]
-        self._create_run_notification = False
+        self._update_run_notification = False
         
         # Load from active session if exists
         from src import sessions
@@ -624,9 +624,9 @@ class KlatAgent:
         provider = get_provider(current_provider())
 
         notification = ""
-        if getattr(self, "_create_run_notification", False):
+        if getattr(self, "_update_run_notification", False):
             notification = "[System Alert: The project architecture and overview have been analyzed and updated in KLAT.md at the user's request.]\n\n"
-            self._create_run_notification = False
+            self._update_run_notification = False
 
         resolved_message = notification + resolve_mentions(message)
 

@@ -58,6 +58,7 @@ You can run commands during a chat session to configure settings or manage exten
 * `/extension enable <name>` — Enable an extension
 * `/extension disable <name>` — Disable an extension
 * `/extension remove <name>` — Uninstall an extension
+* `/update` — Re-analyze the codebase and overwrite `KLAT.md`
 * `/reset` — Clear conversation history
 * `q` / `exit` / `quit` — Exit the terminal application
 
