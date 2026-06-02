@@ -1,1 +1,1 @@
-# Klat - Computer Use Agent by TreeSoft
+# Klat - SWE Agent by TreeSoft
