@@ -20,6 +20,13 @@ env/
 # Environment / secrets
 env/.env
 
+# Agents
+KLAT.md
+AGENTS.md
+CLAUDE.md
+CODEX.md
+GEMINI.md
+
 # IDE
 .vscode/
 .idea/

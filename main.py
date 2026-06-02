@@ -347,6 +347,35 @@ def _cmd_session(args: str, agent: KlatAgent, project: str, location: str) -> Kl
         return agent
 
 
+def _cmd_create(agent: KlatAgent) -> None:
+    """Handle /create — analyze the codebase and write project context to KLAT.md."""
+    import time
+    from src.ui import agent_print, agent_step, agent_error
+    from src.agent import run_single_completion, _gather_project_context, ANALYSIS_SYSTEM_PROMPT
+    from src.tools import _write_file
+    
+    agent_print("Starting automated project analysis...")
+    agent_step("gather", "Reading files and generating directory structure")
+    
+    start_time = time.time()
+    try:
+        context = _gather_project_context()
+        prompt = f"Please analyze this project context and generate the KLAT.md analysis file.\n\nProject Context:\n{context}"
+        
+        agent_step("analyze", "Analyzing codebase architecture via LLM")
+        analysis = run_single_completion(prompt, ANALYSIS_SYSTEM_PROMPT)
+        
+        agent_step("write", "Saving analysis to KLAT.md")
+        _write_file("KLAT.md", analysis)
+        
+        elapsed = time.time() - start_time
+        agent_print(f"Project analysis successfully compiled and written to KLAT.md ({len(analysis)} chars, {elapsed:.1f}s)")
+        
+        agent._create_run_notification = True
+    except Exception as e:
+        agent_error(f"Failed to generate project analysis: {e}")
+
+
 def _cmd_demo() -> None:
     """Handle /demo — run the interactive logo viewer."""
     from src import demo
@@ -375,6 +404,7 @@ def _cmd_help() -> None:
   /model <name>          set model for this session
   /reasoning             show current reasoning level
   /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
+  /create                analyze codebase and generate project reference KLAT.md
   /extension             extension manager options
   /extension list        list installed extensions
   /extension create <d>  generate a boilerplate extension folder
@@ -544,6 +574,8 @@ def main() -> None:
                         _cmd_extension(remainder, agent)
                     elif cmd == "session":
                         agent = _cmd_session(remainder, agent, project, location)
+                    elif cmd == "create":
+                        _cmd_create(agent)
                     elif cmd in {"help", "?"}:
                         _cmd_help()
                     elif cmd == "reset":

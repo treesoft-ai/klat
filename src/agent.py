@@ -12,11 +12,84 @@ from __future__ import annotations
 import os
 import json
 from typing import Any
+from pathlib import Path
 
 from src import ui
 from src.config import current_provider, current_model, current_reasoning
 from src.providers import PROVIDERS, get_provider
 from src.tools import TOOL_DECLARATIONS, WORK_DIR, dispatch
+
+
+# ---------------------------------------------------------------------------
+# User instructions support (KLAT.md / AGENTS.md)
+# ---------------------------------------------------------------------------
+
+_instructions_cache = {
+    "klat_mtime": 0.0,
+    "agents_mtime": 0.0,
+    "content": ""
+}
+
+def _load_user_instructions() -> str:
+    global _instructions_cache
+    klat_path = Path(WORK_DIR) / "KLAT.md"
+    agents_path = Path(WORK_DIR) / "AGENTS.md"
+    
+    klat_exists = klat_path.is_file()
+    agents_exists = agents_path.is_file()
+    
+    if not klat_exists and not agents_exists:
+        _instructions_cache = {"klat_mtime": 0.0, "agents_mtime": 0.0, "content": ""}
+        return ""
+        
+    try:
+        klat_mtime = klat_path.stat().st_mtime if klat_exists else 0.0
+        agents_mtime = agents_path.stat().st_mtime if agents_exists else 0.0
+    except Exception:
+        klat_mtime = 0.0
+        agents_mtime = 0.0
+
+    if klat_mtime == _instructions_cache["klat_mtime"] and agents_mtime == _instructions_cache["agents_mtime"]:
+        return _instructions_cache["content"]
+        
+    klat_content = ""
+    agents_content = ""
+    
+    if klat_exists:
+        try:
+            klat_content = klat_path.read_text(encoding="utf-8", errors="replace").strip()
+        except Exception:
+            pass
+            
+    if agents_exists:
+        try:
+            agents_content = agents_path.read_text(encoding="utf-8", errors="replace").strip()
+        except Exception:
+            pass
+            
+    same_file = False
+    if klat_exists and agents_exists:
+        try:
+            same_file = klat_path.resolve() == agents_path.resolve()
+        except Exception:
+            pass
+            
+    same_content = (klat_content == agents_content)
+    
+    content_parts = []
+    if klat_content:
+        content_parts.append(klat_content)
+        
+    if agents_content and not same_file and not same_content:
+        content_parts.append(agents_content)
+        
+    combined = "\n\n".join(content_parts)
+    _instructions_cache = {
+        "klat_mtime": klat_mtime,
+        "agents_mtime": agents_mtime,
+        "content": combined
+    }
+    return combined
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +113,11 @@ def _build_system_prompt() -> str:
         dynamic_tools_text = ""
         custom_rules_text = ""
 
+    user_inst = _load_user_instructions()
+    user_inst_section = f"## User Instructions\n{user_inst}\n\n" if user_inst else ""
+
     return (
+        f"{user_inst_section}"
         "You are Klat, a software engineering assistant running in the terminal.\n\n"
         "## Personality\n"
         "Be warm and direct. Talk like a sharp colleague, not a customer service bot.\n"
@@ -511,6 +588,7 @@ class KlatAgent:
         self._openai_messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
         ]
+        self._create_run_notification = False
         
         # Load from active session if exists
         from src import sessions
@@ -527,9 +605,16 @@ class KlatAgent:
 
     def chat(self, message: str) -> None:
         """Send a message, run any tool calls, and print the final reply."""
+        rebuild_system_prompt()
+        self.refresh_system_prompt()
         provider = get_provider(current_provider())
 
-        resolved_message = resolve_mentions(message)
+        notification = ""
+        if getattr(self, "_create_run_notification", False):
+            notification = "[System Alert: The project architecture and overview have been analyzed and updated in KLAT.md at the user's request.]\n\n"
+            self._create_run_notification = False
+
+        resolved_message = notification + resolve_mentions(message)
 
         try:
             if provider["backend"] == "gemini":
@@ -602,3 +687,119 @@ class KlatAgent:
              history=history,
              backend=backend
         )
+
+
+# ---------------------------------------------------------------------------
+# Project Analysis Support
+# ---------------------------------------------------------------------------
+
+ANALYSIS_SYSTEM_PROMPT = (
+    "You are an expert software architect analyzing a codebase.\n"
+    "Your goal is to produce a comprehensive, dense, and highly structured reference document (KLAT.md) for this project.\n"
+    "This document will be loaded directly into another AI assistant's system instructions.\n\n"
+    "CRITICAL OUTPUT FORMATTING RULES:\n"
+    "- Output ONLY the raw Markdown content. DO NOT wrap the entire output in a markdown code block (e.g. fenced with ```markdown and ```).\n"
+    "- DO NOT write any conversational prefix, introductory text, or concluding remarks. Start directly with the main heading.\n\n"
+    "STRICT TEMPLATE STRUCTURE:\n"
+    "You must format your response exactly using this template structure:\n\n"
+    "# KLAT.md — Project Knowledge Base\n\n"
+    "## 1. Project Overview\n"
+    "[Provide a concise summary, tech stack, and primary entrypoints here]\n\n"
+    "## 2. Core Architecture & Flow\n"
+    "[Explain components, runtime sequences, data flow, and design patterns here]\n\n"
+    "## 3. Key Components & Files\n"
+    "[Provide a Markdown table mapping key files to their roles here]\n\n"
+    "## 4. Developer Workflows\n"
+    "[Provide setup, run, configuration, and testing workflows here]\n\n"
+    "## 5. Developer & Agent Guidelines\n"
+    "[Specify path rules, constraints, session details, and safety parameters here]\n\n"
+    "## 6. Project Conventions & Gotchas\n"
+    "[Highlight command syntax, fallbacks, SDK limits, or coloring here]"
+)
+
+def _gather_project_context() -> str:
+    from src.tools import _tree, _read_file
+    from pathlib import Path
+    
+    context = []
+    
+    # 1. Project Directory Structure
+    context.append("### Project Structure")
+    try:
+        structure = _tree(path=".", max_depth=4, show_hidden=False, dirs_only=False)
+        context.append(structure)
+    except Exception as e:
+        context.append(f"Error gathering structure: {e}")
+        
+    # 2. Key configuration and meta files
+    key_files = [
+        "README.md",
+        "requirements.txt",
+        "package.json",
+        "go.mod",
+        "Cargo.toml",
+        "setup.py",
+        "pyproject.toml",
+        "main.py",
+        "app.py"
+    ]
+    
+    for filename in key_files:
+        p = Path(WORK_DIR) / filename
+        if p.is_file():
+            context.append(f"### File: {filename}")
+            try:
+                content = _read_file(filename, start_line=1, end_line=300)
+                context.append(content)
+            except Exception as e:
+                context.append(f"Error reading file {filename}: {e}")
+                
+    return "\n\n".join(context)
+
+def run_single_completion(prompt: str, system_prompt: str) -> str:
+    """Run a single-turn completion (no history) using the active provider/model and return the reply."""
+    from google import genai
+    from google.genai import types
+    from openai import OpenAI
+    from src.config import ensure_env
+    
+    provider_name = current_provider()
+    provider      = get_provider(provider_name)
+    model         = current_model()
+    
+    if provider["backend"] == "gemini":
+        project, location = ensure_env()
+        if provider_name == "vertexai":
+            client = genai.Client(vertexai=True, project=project, location=location)
+        else:
+            api_key = os.getenv(provider["env_key"], "")
+            if not api_key:
+                raise RuntimeError(f"{provider['env_key']} is not set. Add it to env/.env to use {provider['display_name']}.")
+            client = genai.Client(api_key=api_key)
+            
+        response = client.models.generate_content(
+            model=model,
+            contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+            ),
+        )
+        parts = []
+        for p in response.candidates[0].content.parts:
+            if hasattr(p, "text") and p.text:
+                parts.append(p.text)
+        return " ".join(parts).strip()
+    else:
+        api_key = os.getenv(provider["env_key"], "")
+        if not api_key:
+            raise RuntimeError(f"{provider['env_key']} is not set. Add it to env/.env to use {provider['display_name']}.")
+        client = OpenAI(base_url=provider["base_url"], api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return (response.choices[0].message.content or "").strip()
