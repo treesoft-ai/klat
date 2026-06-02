@@ -424,6 +424,7 @@ def _cmd_help() -> None:
   /model <name>          set model for this session
   /reasoning             show current reasoning level
   /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
+  /onboard               re-run onboarding (personal questions + provider setup)
   /create                analyze codebase and generate project reference KLAT.md
   /update                re-analyze codebase and overwrite KLAT.md
   /extension             extension manager options
@@ -435,7 +436,7 @@ def _cmd_help() -> None:
   /extension disable <n> disable an active extension
   /extension remove <n>  uninstall/delete an extension
   /session               session manager options
-  /session list          list all sessions
+  /session list          list all saved sessions
   /session new [id]      start a new session (replaces /reset)
   /session load <id>     load a saved session
   /session delete <id>   delete a session
@@ -445,6 +446,12 @@ def _cmd_help() -> None:
   ─────────────────────────────────────────────────────
   Providers: {', '.join(PROVIDER_NAMES)}
 """)
+
+
+def _cmd_onboard() -> None:
+    """Handle /onboard — re-run the onboarding wizard (overwrites preferences)."""
+    from src.onboarding import run_full_onboarding
+    run_full_onboarding(force=True)
 
 
 
@@ -591,6 +598,8 @@ def main() -> None:
                         _cmd_model(remainder)
                     elif cmd == "reasoning":
                         _cmd_reasoning(remainder)
+                    elif cmd == "onboard":
+                        _cmd_onboard()
                     elif cmd == "extension":
                         _cmd_extension(remainder, agent)
                     elif cmd == "session":

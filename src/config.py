@@ -134,6 +134,11 @@ def configured_providers() -> list[str]:
     return [k for k in PROVIDER_NAMES if _has_credentials(k)]
 
 
+def needs_provider_setup() -> bool:
+    """True if no provider is currently usable (catches both missing file and empty file)."""
+    return not configured_providers()
+
+
 # ---------------------------------------------------------------------------
 # First-run interactive setup
 # ---------------------------------------------------------------------------
@@ -273,17 +278,23 @@ def _load_config() -> None:
 
 def ensure_env() -> tuple[str, str]:
     """
-    Load ~/.klat/settings/config.json, run setup wizard if needed, and return
+    Load ~/.klat/settings/config.json, run onboarding if needed, and return
     (project, location) for Vertex AI (empty strings when using a non-Vertex provider).
 
-    Exits if no provider is configured after setup.
+    Onboarding covers both personal questions (preferences.json) and provider/API
+    key setup (config.json). Only the missing step is run.
+
+    Exits if no provider is configured after onboarding.
     """
     _migrate_old_env()
-
-    if not CONFIG_FILE.exists():
-        _run_setup()
-
     _load_config()
+
+    prefs_file = CONFIG_DIR / "preferences.json"
+    if not prefs_file.exists() or needs_provider_setup():
+        # Local import to avoid a circular dependency with src.onboarding.
+        from src.onboarding import run_full_onboarding
+        run_full_onboarding()
+        _load_config()  # reload to pick up keys just written
 
     # Restore persisted provider / model / reasoning choice
     saved_provider = _config.get("provider", "").strip()
