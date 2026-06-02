@@ -109,11 +109,102 @@ try:
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.filters import Condition, has_completions
     from prompt_toolkit.application import get_app
+    from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion, AutoSuggestFromHistory
     HAS_PROMPT_TOOLKIT = True
 except ImportError:
     HAS_PROMPT_TOOLKIT = False
 
 if HAS_PROMPT_TOOLKIT:
+    class KlatAutoSuggest(AutoSuggest):
+        def __init__(self):
+            self.history_suggest = AutoSuggestFromHistory()
+            self.commands = [
+                "/provider",
+                "/model",
+                "/reasoning",
+                "/extension list",
+                "/extension export",
+                "/extension import",
+                "/extension enable",
+                "/extension disable",
+                "/extension remove",
+                "/extension",
+                "/reset",
+                "/help",
+            ]
+            # Sort shortest first so root commands suggest before subcommands
+            self.commands.sort(key=len)
+
+        def get_suggestion(self, buffer, document):
+            text = document.text
+            if not text.startswith("/"):
+                return self.history_suggest.get_suggestion(buffer, document)
+
+            # Smart completion for /provider
+            if text.startswith("/provider "):
+                arg = text[len("/provider "):]
+                try:
+                    from src.config import configured_providers
+                    providers = sorted(configured_providers())
+                except Exception:
+                    providers = []
+                for p in providers:
+                    if p.startswith(arg) and p != arg:
+                        return Suggestion(p[len(arg):])
+                return None
+
+            # Smart completion for /reasoning
+            if text.startswith("/reasoning "):
+                arg = text[len("/reasoning "):]
+                levels = ["none", "minimal", "low", "medium", "high", "xhigh"]
+                for lvl in levels:
+                    if lvl.startswith(arg) and lvl != arg:
+                        return Suggestion(lvl[len(arg):])
+                return None
+
+            # Smart completion for /extension enable/disable/remove
+            if text.startswith("/extension enable "):
+                arg = text[len("/extension enable "):]
+                try:
+                    from src.extensions import list_extensions
+                    candidates = [e["folder_name"].replace(".disabled", "") for e in list_extensions() if not e["enabled"]]
+                except Exception:
+                    candidates = []
+                for name in sorted(candidates):
+                    if name.startswith(arg) and name != arg:
+                        return Suggestion(name[len(arg):])
+                return None
+
+            if text.startswith("/extension disable "):
+                arg = text[len("/extension disable "):]
+                try:
+                    from src.extensions import list_extensions
+                    candidates = [e["folder_name"].replace(".disabled", "") for e in list_extensions() if e["enabled"]]
+                except Exception:
+                    candidates = []
+                for name in sorted(candidates):
+                    if name.startswith(arg) and name != arg:
+                        return Suggestion(name[len(arg):])
+                return None
+
+            if text.startswith("/extension remove "):
+                arg = text[len("/extension remove "):]
+                try:
+                    from src.extensions import list_extensions
+                    candidates = [e["folder_name"].replace(".disabled", "") for e in list_extensions()]
+                except Exception:
+                    candidates = []
+                for name in sorted(candidates):
+                    if name.startswith(arg) and name != arg:
+                        return Suggestion(name[len(arg):])
+                return None
+
+            # Default command completion
+            for cmd in self.commands:
+                if cmd.startswith(text) and cmd != text:
+                    return Suggestion(cmd[len(text):])
+            return None
+
     class MentionCompleter(Completer):
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
@@ -223,6 +314,7 @@ if HAS_PROMPT_TOOLKIT:
             _prompt_session = PromptSession(
                 completer=MentionCompleter(),
                 complete_while_typing=True,
+                auto_suggest=KlatAutoSuggest(),
                 style=style,
                 key_bindings=kb
             )
