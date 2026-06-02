@@ -1,5 +1,7 @@
 # 🌿 Klat — "Green by design. Powerful by nature."
 
+### (!) This project is in early development. If you have any suggestion, just open an issue or contact me at `alexutzu@treesoft.pro`, I will actually add your suggestion if I like it or if it is a good idea. Thank you!
+
 The definitive SWE agent. Easy to adopt, powerful to master. Built by TreeSoft for the next generation of developers.
 
 ## Setup
@@ -90,5 +92,6 @@ When Klat loads an extension, it provides a virtual `klat` module. Through this 
 
 ## Roadmap
 
+* **Free Klat Provider**: Our own in-house LLM provider, built into Klat with generous free usage for everyone. No API key, no signup, no credit card — install Klat and start coding immediately.
 * **Node.js Transition**: Porting the core architecture to Node.js to align with industry standards for modern, asynchronous SWE agents and tap into a broader ecosystem of developer tools.
 * **VS Code Integration**: Developing a native VS Code extension to bring Klat's full agentic capabilities, interactive tools, and hot-loading system directly into the editor where you write your code.
