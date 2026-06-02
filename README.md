@@ -38,12 +38,12 @@ Provide these keys during first-time setup or configure them in `config.json`:
 
 | Provider | Config key | Default model |
 | :--- | :--- | :--- |
-| **Vertex AI** | `google_cloud_project` / `google_cloud_location` | `gemini-1.5-pro-002` |
-| **AI Studio** | `gemini_api_key` | `gemini-2.5-pro` |
-| **Anthropic** | `anthropic_api_key` | `claude-3-5-sonnet-latest` |
-| **OpenAI** | `openai_api_key` | `gpt-4o` |
-| **OpenRouter** | `openrouter_api_key` | `anthropic/claude-3.5-sonnet` |
-| **NVIDIA NIM** | `nvidia_api_key` | `meta/llama-3.1-70b-instruct` |
+| **Vertex AI** | `google_cloud_project` / `google_cloud_location` | `google/gemini-3.5-flash` |
+| **AI Studio** | `gemini_api_key` | `gemini-3.5-flash` |
+| **Anthropic** | `anthropic_api_key` | `claude-opus-4.8` |
+| **OpenAI** | `openai_api_key` | `gpt-5.5-pro` |
+| **OpenRouter** | `openrouter_api_key` | `minimax/minimax-m3` |
+| **NVIDIA NIM** | `nvidia_api_key` | `z-ai/glm-5.1` |
 
 ## Slash commands
 

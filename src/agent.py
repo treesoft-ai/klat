@@ -432,13 +432,22 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
             else:
                 raise e
 
-        choice  = response.choices[0]
-        message_obj = choice.message
-        
+        choices = getattr(response, "choices", None)
+        if not choices:
+            raise RuntimeError(
+                f"Model returned a response with no choices (model={model}). "
+                "This usually means the model refused, errored, or the context was too long."
+            )
+        choice = choices[0]
+        message_obj = getattr(choice, "message", None)
+        if message_obj is None:
+            raise RuntimeError(f"Model returned a choice with no message (model={model}).")
+
         # Extract thoughts
         thought = ""
-        content = message_obj.content or ""
-        
+        raw_content = getattr(message_obj, "content", None)
+        content = raw_content if isinstance(raw_content, str) else ""
+
         if getattr(message_obj, "reasoning_content", None):
             thought = message_obj.reasoning_content
         elif getattr(message_obj, "reasoning", None):
@@ -447,30 +456,43 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
             thought = message_obj.model_extra.get("reasoning") or message_obj.model_extra.get("reasoning_content")
         elif isinstance(message_obj, dict):
             thought = message_obj.get("reasoning_content") or message_obj.get("reasoning")
-            
+
         import re
-        think_match = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
-        if think_match:
-            thought = think_match.group(1).strip()
-            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-            try:
-                message_obj.content = content
-            except Exception:
-                pass
-        
+        if isinstance(content, str):
+            think_match = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
+            if think_match:
+                thought = think_match.group(1).strip()
+                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+                try:
+                    message_obj.content = content
+                except Exception:
+                    pass
+
         if thought:
             ui.agent_thought(thought)
 
-        messages.append(message_obj.model_dump(exclude_unset=True))
-
-        if not message_obj.tool_calls:
-            return content.strip()
-
-        for tc in message_obj.tool_calls:
-            name = tc.function.name
+        try:
+            messages.append(message_obj.model_dump(exclude_unset=True))
+        except Exception:
             try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
+                messages.append(message_obj.model_dump())
+            except Exception:
+                pass
+
+        tool_calls = getattr(message_obj, "tool_calls", None) or []
+        if not tool_calls:
+            return content.strip() if isinstance(content, str) else ""
+
+        for tc in tool_calls:
+            if tc is None:
+                continue
+            func = getattr(tc, "function", None)
+            if func is None:
+                continue
+            name = getattr(func, "name", None) or "unknown_tool"
+            try:
+                args = json.loads(func.arguments or "{}")
+            except (json.JSONDecodeError, TypeError):
                 args = {}
 
             ui.agent_step(name, _args_summary(args))
@@ -478,7 +500,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
 
             messages.append({
                 "role":         "tool",
-                "tool_call_id": tc.id,
+                "tool_call_id": getattr(tc, "id", "") or "",
                 "content":      str(raw),
             })
 
@@ -497,20 +519,23 @@ def heal_openai_messages(messages: list[dict]) -> None:
             last_assistant = messages[i]
             last_assistant_index = i
             break
-            
+
     if not last_assistant:
         return
-        
+
     tool_calls = last_assistant.get("tool_calls") or []
-    tool_call_ids = {tc["id"] for tc in tool_calls if "id" in tc}
-    
+    tool_call_ids = set()
+    for tc in tool_calls:
+        if isinstance(tc, dict) and "id" in tc:
+            tool_call_ids.add(tc["id"])
+
     responded_ids = set()
     for i in range(last_assistant_index + 1, len(messages)):
         if messages[i].get("role") == "tool":
             responded_ids.add(messages[i].get("tool_call_id"))
-            
+
     for tc in tool_calls:
-        if "id" in tc:
+        if isinstance(tc, dict) and "id" in tc:
             tc_id = tc["id"]
             if tc_id not in responded_ids:
                 messages.append({
