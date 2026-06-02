@@ -335,6 +335,24 @@ def _cmd_session(args: str, agent: KlatAgent, project: str, location: str) -> Kl
         return agent
 
 
+def _cmd_demo() -> None:
+    """Handle /demo — run the interactive logo viewer."""
+    from src import demo
+    demo.main()
+
+    # Restore Klat UI
+    import os
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+    ext_count = load_extensions(silent=True)
+    ext_text = int_to_words(ext_count)
+    print_banner(_get_info_lines(ext_text))
+
+    from src import sessions
+    sessions.replay_transcript()
+    print(f"\n  {GREEN}🌿{RESET} Klat Demo finished.\n")
+
+
 def _cmd_help() -> None:
     print(f"""
   {GREEN}Klat slash commands{RESET}
@@ -358,6 +376,7 @@ def _cmd_help() -> None:
   /session load <id>     load a saved session
   /session delete <id>   delete a session
   /reset                 alias for /session new
+  /demo                  run the interactive Klat logo viewer
   exit / quit / q        exit Klat
   ─────────────────────────────────────────────────────
   Providers: {', '.join(PROVIDER_NAMES)}
@@ -477,6 +496,21 @@ def main() -> None:
                 parts     = raw[1:].split(None, 1)   # strip the leading "/"
                 cmd       = parts[0].lower()
                 remainder = parts[1] if len(parts) > 1 else ""
+
+                if cmd == "demo":
+                    _cmd_demo()
+                    p = get_provider(current_provider())
+                    backend = p["backend"]
+                    history = agent._gemini_history if backend == "gemini" else agent._openai_messages
+                    sessions.save_session(
+                        session_id=sessions.get_active_session_id(),
+                        provider=current_provider(),
+                        model=current_model(),
+                        reasoning=current_reasoning(),
+                        history=history,
+                        backend=backend
+                    )
+                    continue
 
                 # Intercept stdout to capture output of command
                 import sys
