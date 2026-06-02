@@ -201,6 +201,140 @@ def _cmd_extension(args: str, agent: KlatAgent) -> None:
         agent_error(f"Unknown extension subcommand: {subcmd}. Type /extension for usage.")
 
 
+def _get_info_lines(ext_text: str) -> list[str]:
+    from src import sessions
+    active_id = sessions.get_active_session_id()
+    is_fresh = len([e for e in sessions.get_transcript() if e.get('type') in ('user', 'reply')]) == 0
+    session_val = "fresh" if is_fresh else active_id
+    
+    return [
+        f"{DIM}{ui.BANNER_SUBTITLE}{RESET}   {ui.colorize_gradient('TreeSoft')}",
+        f"{DIM}extensions{RESET}  {ui.colorize_gradient(ext_text)}",
+        f"{DIM}session{RESET}     {ui.colorize_gradient(session_val)}",
+        f"{DIM}provider{RESET}    {ui.colorize_gradient(current_provider())}",
+        f"{DIM}model{RESET}       {ui.colorize_gradient(current_model())}",
+        f"{DIM}reasoning{RESET}   {ui.colorize_gradient(current_reasoning())}",
+    ]
+
+
+def _cmd_session(args: str, agent: KlatAgent, project: str, location: str) -> KlatAgent:
+    """Handle /session subcommands: list, new, load, delete"""
+    parts = args.strip().split(None, 1)
+    if not parts:
+        print(f"\n  {GREEN}Klat Session Management{RESET}")
+        print("  ─────────────────────────────────────────────────────")
+        print("  /session list                 list all saved sessions")
+        print("  /session new [id]             start a new session (replaces /reset)")
+        print("  /session load <id>            load a saved session")
+        print("  /session delete <id>          delete a session")
+        print("  ─────────────────────────────────────────────────────\n")
+        return agent
+
+    subcmd = parts[0].lower()
+    remainder = parts[1].strip() if len(parts) > 1 else ""
+
+    from src import sessions
+
+    if subcmd == "list":
+        exts = sessions.list_sessions()
+        if not exts:
+            agent_print("No saved sessions found.")
+            return agent
+        print(f"\n  {GREEN}Saved Sessions:{RESET}")
+        print("  ─────────────────────────────────────────────────────")
+        active = sessions.get_active_session_id()
+        for e in exts:
+            status = f"{GREEN}(active){RESET}" if e == active else ""
+            print(f"  - {e} {status}")
+        print("  ─────────────────────────────────────────────────────\n")
+        return agent
+
+    elif subcmd == "new":
+        import os
+        os.system('cls' if os.name == 'nt' else 'clear')
+
+        if remainder:
+            new_id = remainder
+        else:
+            from datetime import datetime
+            new_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        sessions.clear_transcript()
+        sessions.set_active_session_id(new_id)
+
+        # Reset the agent history and save
+        agent = KlatAgent(project, location)
+        agent.reset()
+
+        # Print banner
+        ext_count = load_extensions(silent=True)
+        ext_text = int_to_words(ext_count)
+        print_banner(_get_info_lines(ext_text))
+        agent_print(f"Started new session: {GREEN}{new_id}{RESET}")
+        return agent
+
+    elif subcmd == "load":
+        if not remainder:
+            agent_error("Usage: /session load <session-id>")
+            return agent
+
+        session_file = sessions.get_sessions_dir() / remainder / "session.json"
+        if not session_file.exists():
+            agent_error(f"Session '{remainder}' not found.")
+            return agent
+
+        import os
+        os.system('cls' if os.name == 'nt' else 'clear')
+
+        sessions.set_active_session_id(remainder)
+        session_data = sessions.load_session(remainder)
+
+        if session_data:
+            from src import config
+            config.apply_session_settings(
+                session_data.get("provider", ""),
+                session_data.get("model", ""),
+                session_data.get("reasoning", "none")
+            )
+
+        # Re-initialize the agent
+        agent = KlatAgent(project, location)
+
+        # Print banner
+        ext_count = load_extensions(silent=True)
+        ext_text = int_to_words(ext_count)
+        print_banner(_get_info_lines(ext_text))
+
+        # Replay the transcript
+        sessions.replay_transcript()
+
+        agent_print(f"Loaded session: {GREEN}{remainder}{RESET}")
+        return agent
+
+    elif subcmd == "delete":
+        if not remainder:
+            agent_error("Usage: /session delete <session-id>")
+            return agent
+
+        session_dir = sessions.get_sessions_dir() / remainder
+        if not session_dir.exists():
+            agent_error(f"Session '{remainder}' not found.")
+            return agent
+
+        sessions.delete_session(remainder)
+        agent_print(f"Session '{GREEN}{remainder}{RESET}' deleted.")
+
+        # If the deleted session was active, start a new one
+        if remainder == sessions.get_active_session_id():
+            agent = _cmd_session("new", agent, project, location)
+
+        return agent
+
+    else:
+        agent_error(f"Unknown session subcommand: {subcmd}. Type /session for usage.")
+        return agent
+
+
 def _cmd_help() -> None:
     print(f"""
   {GREEN}Klat slash commands{RESET}
@@ -218,7 +352,12 @@ def _cmd_help() -> None:
   /extension enable <n>  enable a disabled extension
   /extension disable <n> disable an active extension
   /extension remove <n>  uninstall/delete an extension
-  /reset                 clear conversation history
+  /session               session manager options
+  /session list          list all sessions
+  /session new [id]      start a new session (replaces /reset)
+  /session load <id>     load a saved session
+  /session delete <id>   delete a session
+  /reset                 alias for /session new
   exit / quit / q        exit Klat
   ─────────────────────────────────────────────────────
   Providers: {', '.join(PROVIDER_NAMES)}
@@ -256,6 +395,38 @@ def int_to_words(n: int) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import sys
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, IOError):
+        pass
+
+    session_id = None
+    if len(sys.argv) > 1:
+        for i in range(1, len(sys.argv)):
+            if sys.argv[i] == "--session" and i + 1 < len(sys.argv):
+                session_id = sys.argv[i+1]
+                break
+
+    from src import sessions
+    if session_id:
+        sessions.set_active_session_id(session_id)
+        # Apply settings if the session exists on disk
+        session_data = sessions.load_session(session_id)
+        if session_data:
+            from src import config
+            config.apply_session_settings(
+                session_data.get("provider", ""),
+                session_data.get("model", ""),
+                session_data.get("reasoning", "none")
+            )
+    else:
+        from datetime import datetime
+        new_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        sessions.clear_transcript()
+        sessions.set_active_session_id(new_id)
+
     project, location = ensure_env()
 
     # Load existing extensions silently
@@ -268,16 +439,26 @@ def main() -> None:
 
     agent = KlatAgent(project, location)
 
+    # Save session state immediately on startup so it exists on disk
     p = get_provider(current_provider())
-    info_lines = [
-        "",
-        f"{DIM}{ui.BANNER_SUBTITLE}{RESET}   {ui.colorize_gradient('TreeSoft')}",
-        f"{DIM}extensions{RESET}  {ui.colorize_gradient(ext_text)}",
-        f"{DIM}provider{RESET}    {ui.colorize_gradient(current_provider())}",
-        f"{DIM}model{RESET}       {ui.colorize_gradient(current_model())}",
-        f"{DIM}reasoning{RESET}   {ui.colorize_gradient(current_reasoning())}",
-    ]
-    print_banner(info_lines)
+    backend = p["backend"]
+    history = agent._gemini_history if backend == "gemini" else agent._openai_messages
+    sessions.save_session(
+        session_id=sessions.get_active_session_id(),
+        provider=current_provider(),
+        model=current_model(),
+        reasoning=current_reasoning(),
+        history=history,
+        backend=backend
+    )
+
+    print_banner(_get_info_lines(ext_text))
+
+    # Replay transcript on startup if it exists
+    active_id = sessions.get_active_session_id()
+    session_data = sessions.load_session(active_id)
+    if session_data:
+        sessions.replay_transcript()
 
     _agent_busy = False
     while True:
@@ -292,29 +473,62 @@ def main() -> None:
 
             # ── Slash commands ────────────────────────────────────────────
             if raw.startswith("/"):
+                sessions.record_ui_event("command", text=raw)
                 parts     = raw[1:].split(None, 1)   # strip the leading "/"
                 cmd       = parts[0].lower()
                 remainder = parts[1] if len(parts) > 1 else ""
 
-                if cmd == "provider":
-                    _cmd_provider(remainder)
-                elif cmd == "model":
-                    _cmd_model(remainder)
-                elif cmd == "reasoning":
-                    _cmd_reasoning(remainder)
-                elif cmd == "extension":
-                    _cmd_extension(remainder, agent)
-                elif cmd in {"help", "?"}:
-                    _cmd_help()
-                elif cmd == "reset":
-                    agent.reset()
-                    agent_print("Conversation cleared.")
-                else:
-                    agent_error(f"Unknown command /{cmd}. Type /help for commands.")
+                # Intercept stdout to capture output of command
+                import sys
+                from src.sessions import OutputInterceptor, set_replaying
+                interceptor = OutputInterceptor(sys.stdout)
+                original_stdout = sys.stdout
+                sys.stdout = interceptor
+                set_replaying(True)
+
+                try:
+                    if cmd == "provider":
+                        _cmd_provider(remainder)
+                    elif cmd == "model":
+                        _cmd_model(remainder)
+                    elif cmd == "reasoning":
+                        _cmd_reasoning(remainder)
+                    elif cmd == "extension":
+                        _cmd_extension(remainder, agent)
+                    elif cmd == "session":
+                        agent = _cmd_session(remainder, agent, project, location)
+                    elif cmd in {"help", "?"}:
+                        _cmd_help()
+                    elif cmd == "reset":
+                        agent = _cmd_session("new", agent, project, location)
+                    else:
+                        agent_error(f"Unknown command /{cmd}. Type /help for commands.")
+                finally:
+                    sys.stdout = original_stdout
+                    set_replaying(False)
+
+                # Record the captured output in the transcript
+                captured = "".join(interceptor.captured_text)
+                if captured:
+                    sessions.record_ui_event("command_output", text=captured)
+
+                # Save session state after executing slash command to preserve settings changes & command in transcript
+                p = get_provider(current_provider())
+                backend = p["backend"]
+                history = agent._gemini_history if backend == "gemini" else agent._openai_messages
+                sessions.save_session(
+                    session_id=sessions.get_active_session_id(),
+                    provider=current_provider(),
+                    model=current_model(),
+                    reasoning=current_reasoning(),
+                    history=history,
+                    backend=backend
+                )
                 continue
 
             # ── Chat ──────────────────────────────────────────────────────
             _agent_busy = True
+            sessions.record_ui_event("user", text=raw)
             agent.chat(raw)
             _agent_busy = False
 

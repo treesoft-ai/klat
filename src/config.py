@@ -107,6 +107,14 @@ def _persist() -> None:
         json.dump(current_data, f, indent=2)
 
 
+def apply_session_settings(provider: str, model: str, reasoning: str) -> None:
+    """Apply session-specific configuration settings."""
+    _state["provider"] = provider
+    _state["model"] = model
+    _state["reasoning"] = reasoning
+    _persist()
+
+
 # ---------------------------------------------------------------------------
 # Credential helpers
 # ---------------------------------------------------------------------------

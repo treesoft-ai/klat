@@ -359,10 +359,10 @@ def prompt_input(label: str = "task") -> str:
     try:
         if HAS_PROMPT_TOOLKIT:
             session = get_prompt_session()
-            prompt_text = ANSI(f"{GREEN}>{RESET} {label}: ")
+            prompt_text = ANSI(f"{GREEN}>{RESET} ")
             return session.prompt(prompt_text)
         else:
-            return input(f"{GREEN}>{RESET} {label}: ")
+            return input(f"{GREEN}>{RESET} ")
     except (KeyboardInterrupt, EOFError):
         print()
         sys.exit(0)
@@ -397,6 +397,11 @@ def agent_print(text: str) -> None:
     """Print agent output with a green prefix."""
     text = strip_markdown(text)
     print(f"{GREEN}·{RESET} {text}")
+    try:
+        from src import sessions
+        sessions.record_ui_event("reply", text=text)
+    except Exception:
+        pass
 
 
 
@@ -407,6 +412,11 @@ def agent_thought(text: str) -> None:
     print(f"  {DIM}⌁ thinking...{RESET}")
     for line in text.strip().split("\n"):
         print(f"    {DIM}\033[3m{line}{RESET}")
+    try:
+        from src import sessions
+        sessions.record_ui_event("thought", text=text)
+    except Exception:
+        pass
 
 
 
@@ -414,6 +424,11 @@ def agent_step(action: str, detail: str = "") -> None:
     """Print a single agent action step."""
     detail_str = f"  {DIM}{detail}{RESET}" if detail else ""
     print(f"  {GREEN}→{RESET} {action}{detail_str}")
+    try:
+        from src import sessions
+        sessions.record_ui_event("step", action=action, detail=detail)
+    except Exception:
+        pass
 
 
 def agent_done() -> None:
@@ -422,3 +437,8 @@ def agent_done() -> None:
 
 def agent_error(msg: str) -> None:
     print(f"\n{GREEN}!{RESET} {msg}\n")
+    try:
+        from src import sessions
+        sessions.record_ui_event("error", text=msg)
+    except Exception:
+        pass

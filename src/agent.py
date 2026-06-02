@@ -509,6 +509,19 @@ class KlatAgent:
         self._openai_messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
         ]
+        
+        # Load from active session if exists
+        from src import sessions
+        session_id = sessions.get_active_session_id()
+        session_data = sessions.load_session(session_id)
+        if session_data:
+            backend = session_data.get("backend", "openai-compat")
+            if backend == "gemini":
+                self._gemini_history = session_data.get("history", [])
+            else:
+                self._openai_messages = session_data.get("history", [])
+                if not self._openai_messages or self._openai_messages[0].get("role") != "system":
+                    self._openai_messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
 
     def chat(self, message: str) -> None:
         """Send a message, run any tool calls, and print the final reply."""
@@ -519,20 +532,49 @@ class KlatAgent:
         try:
             if provider["backend"] == "gemini":
                 reply = _run_gemini(
-                    resolved_message,
-                    self._gemini_history,
-                    self._project,
-                    self._location,
+                     resolved_message,
+                     self._gemini_history,
+                     self._project,
+                     self._location,
                 )
             else:
                 reply = _run_openai_compat(resolved_message, self._openai_messages)
 
             if reply:
                 ui.agent_print(reply)
+
+            # Save session now that the reply is printed and added to transcript
+            from src import sessions
+            backend = "gemini" if provider["backend"] == "gemini" else "openai-compat"
+            history = self._gemini_history if backend == "gemini" else self._openai_messages
+            sessions.save_session(
+                 session_id=sessions.get_active_session_id(),
+                 provider=current_provider(),
+                 model=current_model(),
+                 reasoning=current_reasoning(),
+                 history=history,
+                 backend=backend
+            )
         except BaseException:
             # Heal conversation history to keep it valid/uncorrupted without forgetting
             heal_openai_messages(self._openai_messages)
             heal_gemini_history(self._gemini_history)
+            
+            # Save the healed history
+            try:
+                from src import sessions
+                backend = "gemini" if provider["backend"] == "gemini" else "openai-compat"
+                history = self._gemini_history if backend == "gemini" else self._openai_messages
+                sessions.save_session(
+                     session_id=sessions.get_active_session_id(),
+                     provider=current_provider(),
+                     model=current_model(),
+                     reasoning=current_reasoning(),
+                     history=history,
+                     backend=backend
+                )
+            except Exception:
+                pass
             raise
 
 
@@ -545,3 +587,16 @@ class KlatAgent:
         """Clear conversation history."""
         self._gemini_history = []
         self._openai_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        from src import sessions
+        sessions.clear_transcript()
+        provider = get_provider(current_provider())
+        backend = "gemini" if provider["backend"] == "gemini" else "openai-compat"
+        history = self._gemini_history if backend == "gemini" else self._openai_messages
+        sessions.save_session(
+             session_id=sessions.get_active_session_id(),
+             provider=current_provider(),
+             model=current_model(),
+             reasoning=current_reasoning(),
+             history=history,
+             backend=backend
+        )
