@@ -97,13 +97,184 @@ def print_banner(info_lines: list[str] = ()) -> None:
     print()
 
 
+# Try importing prompt_toolkit, otherwise fallback to standard input
+try:
+    import os
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.formatted_text import ANSI
+    from prompt_toolkit.styles import Style
+    from prompt_toolkit.layout.containers import FloatContainer, HSplit, Window
+    from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.filters import Condition, has_completions
+    from prompt_toolkit.application import get_app
+    HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    HAS_PROMPT_TOOLKIT = False
+
+if HAS_PROMPT_TOOLKIT:
+    class MentionCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            idx = text.rfind('@')
+            if idx == -1:
+                return
+            
+            # Check if there are spaces between that '@' and the cursor.
+            after_at = text[idx+1:]
+            if ' ' in after_at:
+                return
+            
+            # Parse directory part and prefix
+            import re
+            parts = re.split(r'[/\\]', after_at)
+            if len(parts) > 1:
+                dir_str = after_at[:len(after_at) - len(parts[-1])]
+                prefix = parts[-1]
+            else:
+                dir_str = ""
+                prefix = after_at
+            
+            from src.tools import WORK_DIR
+            search_dir = WORK_DIR
+            if dir_str:
+                resolved_dir = WORK_DIR / dir_str.replace('/', os.sep).replace('\\', os.sep)
+                if resolved_dir.exists() and resolved_dir.is_dir():
+                    search_dir = resolved_dir
+                else:
+                    return
+            
+            try:
+                entries = os.listdir(search_dir)
+            except Exception:
+                return
+            
+            for entry in sorted(entries, key=lambda s: (not os.path.isdir(os.path.join(search_dir, s)), s.lower())):
+                if entry.lower().startswith(prefix.lower()):
+                    full_path = os.path.join(search_dir, entry)
+                    is_dir = os.path.isdir(full_path)
+                    
+                    completion_text = entry
+                    if is_dir:
+                        sep = '\\' if '\\' in dir_str or (os.sep == '\\' and '/' not in dir_str) else '/'
+                        completion_text += sep
+                    
+                    symbol = "+ "
+                    if is_dir:
+                        symbol = "> "
+                    else:
+                        name_lower = entry.lower()
+                        if name_lower in ("readme.md", "readme.txt", "readme"):
+                            symbol = "i "
+
+                    display_text = f"{symbol}{entry}\\" if is_dir else f"{symbol}{entry}"
+                    yield Completion(
+                        completion_text,
+                        start_position=-len(prefix),
+                        display=display_text
+                    )
+
+    _prompt_session = None
+
+    def get_prompt_session():
+        global _prompt_session
+        if _prompt_session is None:
+            style = Style.from_dict({
+                'completion-menu': 'bg:default fg:default',
+                'completion-menu.completion': 'fg:#888888 bg:default',
+                'completion-menu.completion.current': 'fg:#00b450 bg:default bold',
+                'scrollbar': 'bg:default fg:default',
+                'scrollbar.background': 'bg:default fg:default',
+                'scrollbar.button': 'bg:default fg:default',
+            })
+            
+            # Key bindings to customize Enter behavior when selecting a suggestion
+            kb = KeyBindings()
+            
+            @Condition
+            def is_completion_selected():
+                app = get_app()
+                buf = app.current_buffer
+                return bool(buf.complete_state and buf.complete_state.current_completion)
+                
+            @kb.add('enter', filter=has_completions & is_completion_selected)
+            def _(event):
+                buf = event.current_buffer
+                if buf.complete_state and buf.complete_state.current_completion:
+                    comp = buf.complete_state.current_completion
+                    is_dir = comp.text.endswith('/') or comp.text.endswith('\\')
+                    buf.apply_completion(comp)
+                    if is_dir:
+                        buf.start_completion()
+                    else:
+                        buf.insert_text(' ')
+                        buf.cancel_completion()
+
+            @kb.add('escape', 'enter', filter=has_completions & is_completion_selected)
+            def _(event):
+                buf = event.current_buffer
+                if buf.complete_state and buf.complete_state.current_completion:
+                    comp = buf.complete_state.current_completion
+                    buf.apply_completion(comp)
+                    buf.insert_text(' ')
+                    buf.cancel_completion()
+
+            _prompt_session = PromptSession(
+                completer=MentionCompleter(),
+                complete_while_typing=True,
+                style=style,
+                key_bindings=kb
+            )
+            
+            # Customize the layout of PromptSession to:
+            # 1. Start suggestions at the start of the line (left-aligned)
+            # 2. Add 1 line of padding from the input box
+            root = _prompt_session.layout.container
+            def find_float_container(container):
+                if isinstance(container, FloatContainer):
+                    return container
+                if hasattr(container, 'children'):
+                    for c in container.children:
+                        res = find_float_container(c)
+                        if res:
+                            return res
+                if hasattr(container, 'content'):
+                    res = find_float_container(container.content)
+                    if res:
+                        return res
+                if hasattr(container, 'alternative_content'):
+                    res = find_float_container(container.alternative_content)
+                    if res:
+                        return res
+                return None
+
+            fc = find_float_container(root)
+            if fc:
+                for f in fc.floats:
+                    if isinstance(f.content, (CompletionsMenu, MultiColumnCompletionsMenu)):
+                        f.xcursor = False  # Start of line (left-aligned)
+                        f.left = 0  # Align to column 0 of FloatContainer
+                        f.content = HSplit([
+                            Window(height=1, dont_extend_height=True),  # 1 line padding
+                            f.content
+                        ])
+        return _prompt_session
+
+
 def prompt_input(label: str = "task") -> str:
     """Show a clean prompt and return user input."""
     try:
-        return input(f"{GREEN}>{RESET} {label}: ")
+        if HAS_PROMPT_TOOLKIT:
+            session = get_prompt_session()
+            prompt_text = ANSI(f"{GREEN}>{RESET} {label}: ")
+            return session.prompt(prompt_text)
+        else:
+            return input(f"{GREEN}>{RESET} {label}: ")
     except (KeyboardInterrupt, EOFError):
         print()
         sys.exit(0)
+
 
 
 def strip_markdown(text: str) -> str:

@@ -472,6 +472,35 @@ def heal_gemini_history(history: list) -> None:
 # Public agent class
 # ---------------------------------------------------------------------------
 
+def resolve_mentions(message: str) -> str:
+    """Scan the message for @filename and resolve it to @absolute_path if the file/dir exists."""
+    import re
+    from pathlib import Path
+    from src.tools import WORK_DIR
+    
+    pattern = r'@([a-zA-Z0-9_\-\.\/\\]+)'
+    
+    def replace_match(match):
+        raw_path = match.group(1)
+        # Handle trailing punctuation
+        punctuation = ""
+        while raw_path and raw_path[-1] in ".,;:?!):]":
+            punctuation = raw_path[-1] + punctuation
+            raw_path = raw_path[:-1]
+            
+        clean_path_str = raw_path.replace('\\', '/')
+        try:
+            p = Path(WORK_DIR) / clean_path_str
+            if p.exists():
+                abs_path_str = p.resolve().as_posix()
+                return f"@{abs_path_str}{punctuation}"
+        except Exception:
+            pass
+        return match.group(0)
+    
+    return re.sub(pattern, replace_match, message)
+
+
 class KlatAgent:
     def __init__(self, project: str, location: str) -> None:
         self._project  = project
@@ -485,16 +514,18 @@ class KlatAgent:
         """Send a message, run any tool calls, and print the final reply."""
         provider = get_provider(current_provider())
 
+        resolved_message = resolve_mentions(message)
+
         try:
             if provider["backend"] == "gemini":
                 reply = _run_gemini(
-                    message,
+                    resolved_message,
                     self._gemini_history,
                     self._project,
                     self._location,
                 )
             else:
-                reply = _run_openai_compat(message, self._openai_messages)
+                reply = _run_openai_compat(resolved_message, self._openai_messages)
 
             if reply:
                 ui.agent_print(reply)
@@ -503,6 +534,7 @@ class KlatAgent:
             heal_openai_messages(self._openai_messages)
             heal_gemini_history(self._gemini_history)
             raise
+
 
     def refresh_system_prompt(self) -> None:
         """Refresh the system prompt inside the session history."""
