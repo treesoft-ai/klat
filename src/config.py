@@ -101,7 +101,7 @@ def set_model(model: str) -> None:
 
 
 def _persist() -> None:
-    """Write provider, model, reasoning & streaming back to config.json."""
+    """Write provider, model, reasoning & streaming, plus other keys back to config.json."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     current_data = {}
     if CONFIG_FILE.exists():
@@ -110,6 +110,7 @@ def _persist() -> None:
                 current_data = json.load(f)
         except Exception:
             pass
+    current_data.update(_config)
     current_data["provider"] = _state["provider"] or ""
     current_data["model"] = _state["model"] or ""
     current_data["reasoning"] = _state["reasoning"] or "none"
@@ -117,6 +118,126 @@ def _persist() -> None:
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, indent=2)
+
+
+def get_all_settings() -> dict:
+    """Return a dictionary of all current settings."""
+    settings = {
+        "provider": _state["provider"] or "",
+        "model": current_model() or "",
+        "reasoning": current_reasoning() or "none",
+        "streaming": "on" if current_streaming() else "off",
+        "ascii_style": get_ascii_style(),
+    }
+    for k, v in _config.items():
+        if k not in ("provider", "model", "reasoning", "streaming", "ascii_style"):
+            settings[k] = v
+    return settings
+
+
+def set_config_value(key: str, value: str) -> None:
+    """Set and persist a configuration setting key/value."""
+    key_lower = key.strip().lower()
+    if key_lower == "provider":
+        set_provider(value)
+    elif key_lower == "model":
+        set_model(value)
+    elif key_lower == "reasoning":
+        set_reasoning(value)
+    elif key_lower == "streaming":
+        val = value.strip().lower()
+        if val in ("on", "true", "1", "yes"):
+            set_streaming(True)
+        elif val in ("off", "false", "0", "no"):
+            set_streaming(False)
+        else:
+            raise ValueError("Invalid streaming value. Use 'on' or 'off'.")
+    elif key_lower == "ascii_style":
+        val = value.strip().lower()
+        allowed = {"default", "legacy", "experimental"}
+        if val not in allowed:
+            raise ValueError(f"Invalid ASCII style. Choose from: {', '.join(sorted(allowed))}")
+        _config["ascii_style"] = val
+        _persist()
+    else:
+        _config[key_lower] = value
+        _persist()
+        os.environ[key_lower.upper()] = value
+
+
+def reset_config_value(key: str) -> None:
+    """Reset a configuration setting key to its default."""
+    key_lower = key.strip().lower()
+    if key_lower == "provider":
+        available = configured_providers()
+        if available:
+            set_provider(available[0])
+        else:
+            raise ValueError("No providers available to reset to.")
+    elif key_lower == "model":
+        _state["model"] = None
+        if "model" in _config:
+            del _config["model"]
+        _persist()
+    elif key_lower == "reasoning":
+        set_reasoning("none")
+    elif key_lower == "streaming":
+        set_streaming(True)
+    elif key_lower == "ascii_style":
+        if "ascii_style" in _config:
+            del _config["ascii_style"]
+        _persist()
+    else:
+        if key_lower in _config:
+            del _config[key_lower]
+        env_key = key_lower.upper()
+        if env_key in os.environ:
+            del os.environ[env_key]
+        _persist()
+
+
+def randomize_config_value(key: str) -> str:
+    """Randomly select a valid value for the configuration key, save and return it."""
+    import random
+    key_lower = key.strip().lower()
+    if key_lower == "provider":
+        available = configured_providers()
+        if not available:
+            raise ValueError("No configured providers available.")
+        val = random.choice(available)
+        set_provider(val)
+        return val
+    elif key_lower == "model":
+        models_by_provider = {
+            "vertexai": ["google/gemini-3.5-flash", "google/gemini-3.5-pro"],
+            "ai-studio": ["gemini-3.5-flash", "gemini-3.5-pro"],
+            "openai": ["gpt-5.5-pro", "gpt-4o", "gpt-4o-mini"],
+            "anthropic": ["claude-opus-4.8", "claude-3-5-sonnet-latest"],
+            "openrouter": ["minimax/minimax-m3", "meta-llama/llama-3-8b-instruct"],
+            "nvidia-nim": ["z-ai/glm-5.1", "meta/llama3-70b-instruct"],
+        }
+        prov = current_provider()
+        candidates = models_by_provider.get(prov, [get_provider(prov)["default_model"]])
+        val = random.choice(candidates)
+        set_model(val)
+        return val
+    elif key_lower == "reasoning":
+        levels = ["none", "minimal", "low", "medium", "high", "xhigh"]
+        val = random.choice(levels)
+        set_reasoning(val)
+        return val
+    elif key_lower == "streaming":
+        val = random.choice([True, False])
+        set_streaming(val)
+        return "on" if val else "off"
+    elif key_lower == "ascii_style":
+        styles = ["default", "legacy", "experimental"]
+        val = random.choice(styles)
+        _config["ascii_style"] = val
+        _persist()
+        return val
+    else:
+        raise ValueError(f"Cannot randomize custom setting '{key}'. Supported settings: provider, model, reasoning, streaming, ascii_style")
 
 
 def apply_session_settings(provider: str, model: str, reasoning: str) -> None:

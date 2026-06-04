@@ -3,7 +3,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 """
 
 import sys
-from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning
+from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
 from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
@@ -102,6 +102,57 @@ def _cmd_streaming(args: str) -> None:
         agent_print(f"Streaming set to {GREEN}Off{RESET}")
     else:
         agent_error(f"Invalid streaming value '{args}'. Use 'on' or 'off'.")
+
+
+def _cmd_setting(args: str) -> None:
+    """Handle /setting subcommands: set, reset, random or list all settings."""
+    parts = args.strip().split(None, 2)
+    if not parts:
+        settings = get_all_settings()
+        print(f"\n  {GREEN}Klat Settings{RESET}")
+        print("  ─────────────────────────────────────────────────────")
+        for k, v in sorted(settings.items()):
+            print(f"  {k:<20}: {GREEN}{v}{RESET}")
+        print("  ─────────────────────────────────────────────────────\n")
+        return
+
+    subcmd = parts[0].lower()
+    
+    if subcmd == "set":
+        if len(parts) < 3:
+            agent_error("Usage: /setting set <key> <value>")
+            return
+        key = parts[1].strip()
+        val = parts[2].strip()
+        try:
+            set_config_value(key, val)
+            agent_print(f"Setting '{GREEN}{key}{RESET}' set to '{GREEN}{val}{RESET}'")
+        except Exception as e:
+            agent_error(str(e))
+
+    elif subcmd == "reset":
+        if len(parts) < 2:
+            agent_error("Usage: /setting reset <key>")
+            return
+        key = parts[1].strip()
+        try:
+            reset_config_value(key)
+            agent_print(f"Setting '{GREEN}{key}{RESET}' reset to default")
+        except Exception as e:
+            agent_error(str(e))
+
+    elif subcmd == "random":
+        if len(parts) < 2:
+            agent_error("Usage: /setting random <key>")
+            return
+        key = parts[1].strip()
+        try:
+            val = randomize_config_value(key)
+            agent_print(f"Setting '{GREEN}{key}{RESET}' randomized to '{GREEN}{val}{RESET}'")
+        except Exception as e:
+            agent_error(str(e))
+    else:
+        agent_error(f"Unknown setting action: {subcmd}. Use 'set', 'reset', or 'random'.")
 
 
 def _cmd_extension(args: str, agent: KlatAgent) -> None:
@@ -462,6 +513,10 @@ def _cmd_help() -> None:
   /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
   /streaming             show current streaming status
   /streaming <on|off>    toggle streaming response on or off
+  /setting               show all settings and their current values
+  /setting set <k> <v>   set setting key <k> to value <v>
+  /setting reset <k>     reset setting key <k> to default
+  /setting random <k>    randomize setting key <k>
   /onboard               re-run onboarding (personal questions + provider setup)
   /create                analyze codebase and generate project reference KLAT.md
   /update                re-analyze codebase and overwrite KLAT.md
@@ -631,7 +686,9 @@ def main() -> None:
                 set_replaying(True)
 
                 try:
-                    if cmd == "provider":
+                    if cmd == "setting":
+                        _cmd_setting(remainder)
+                    elif cmd == "provider":
                         _cmd_provider(remainder)
                     elif cmd == "model":
                         _cmd_model(remainder)

@@ -123,6 +123,10 @@ if HAS_PROMPT_TOOLKIT:
                 "/model",
                 "/reasoning",
                 "/streaming",
+                "/setting set",
+                "/setting reset",
+                "/setting random",
+                "/setting",
                 "/extension list",
                 "/extension create",
                 "/extension export",
@@ -143,6 +147,62 @@ if HAS_PROMPT_TOOLKIT:
             text = document.text
             if not text.startswith("/"):
                 return self.history_suggest.get_suggestion(buffer, document)
+
+            # Smart completion for /setting set
+            if text.startswith("/setting set "):
+                arg = text[len("/setting set "):]
+                parts = arg.split(None, 1)
+                if len(parts) == 2 or (len(parts) == 1 and arg.endswith(" ")):
+                    key = parts[0].strip().lower()
+                    val = parts[1].strip() if len(parts) == 2 else ""
+                    candidates = []
+                    if key == "ascii_style":
+                        candidates = ["default", "legacy", "experimental"]
+                    elif key == "reasoning":
+                        candidates = ["none", "minimal", "low", "medium", "high", "xhigh"]
+                    elif key == "streaming":
+                        candidates = ["on", "off"]
+                    elif key == "provider":
+                        try:
+                            from src.config import configured_providers
+                            candidates = sorted(configured_providers())
+                        except Exception:
+                            pass
+                    for c in candidates:
+                        if c.startswith(val) and c != val:
+                            return Suggestion(c[len(val):])
+                else:
+                    try:
+                        from src.config import get_all_settings
+                        keys = sorted(get_all_settings().keys())
+                    except Exception:
+                        keys = ["ascii_style", "model", "provider", "reasoning", "streaming"]
+                    for k in keys:
+                        if k.startswith(arg) and k != arg:
+                            return Suggestion(k[len(arg):])
+                return None
+
+            # Smart completion for /setting reset
+            if text.startswith("/setting reset "):
+                arg = text[len("/setting reset "):]
+                try:
+                    from src.config import get_all_settings
+                    keys = sorted(get_all_settings().keys())
+                except Exception:
+                    keys = ["ascii_style", "model", "provider", "reasoning", "streaming"]
+                for k in keys:
+                    if k.startswith(arg) and k != arg:
+                        return Suggestion(k[len(arg):])
+                return None
+
+            # Smart completion for /setting random
+            if text.startswith("/setting random "):
+                arg = text[len("/setting random "):]
+                keys = ["ascii_style", "model", "provider", "reasoning", "streaming"]
+                for k in keys:
+                    if k.startswith(arg) and k != arg:
+                        return Suggestion(k[len(arg):])
+                return None
 
             # Smart completion for /provider
             if text.startswith("/provider "):
