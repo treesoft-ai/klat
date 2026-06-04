@@ -117,11 +117,10 @@ def _bench_start(task_id: str, agent: Any) -> Any:
     from src.agent import KlatAgent
     from src.config import ensure_env
     from src import sessions
-    
+
     if not task_id:
-        klat.ui.print_accent("Usage: /bench start [task_id]")
-        return None
-        
+        return _bench_start_all(agent)
+
     bench_dir = Path.home() / ".klat" / "bench"
     config_file = bench_dir / "config.json"
     active_version = None
@@ -187,7 +186,7 @@ def _bench_start(task_id: str, agent: Any) -> Any:
             dest_file.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_file, dest_file)
             
-    # 2.5 Save active blacklist if present
+    # 2.5 Save active blacklist and allowlist if present
     blacklist = task_data.get("blacklist") or []
     blacklist_file = Path.home() / ".klat" / "bench" / "active_blacklist.json"
     if blacklist:
@@ -203,7 +202,25 @@ def _bench_start(task_id: str, agent: Any) -> Any:
                 blacklist_file.unlink()
             except Exception:
                 pass
-            
+
+    allowlist = task_data.get("allowlist")  # dict[str, bool] or None
+    allowlist_file = Path.home() / ".klat" / "bench" / "active_allowlist.json"
+    if allowlist and isinstance(allowlist, dict):
+        try:
+            with open(allowlist_file, "w", encoding="utf-8") as af:
+                json.dump(allowlist, af, indent=2)
+            blocked = [k for k, v in allowlist.items() if not v]
+            if blocked:
+                klat.ui.print_accent(f"Active tool restrictions initialized: {blocked}")
+        except Exception as e:
+            klat.log(f"Warning: Failed to save active allowlist: {e}")
+    else:
+        if allowlist_file.exists():
+            try:
+                allowlist_file.unlink()
+            except Exception:
+                pass
+
     # 3. Reset/Clear active Klat session and start a new session named bench_<task_id>
     sessions.clear_transcript()
     sessions.set_active_session_id(f"bench_{task_id}")
@@ -220,6 +237,93 @@ def _bench_start(task_id: str, agent: Any) -> Any:
     new_agent.chat(organic_prompt)
     
     return new_agent
+
+
+def _bench_start_all(agent: Any) -> Any:
+    """Run every task in the active benchmark that has a 'sort' field, in ascending order.
+    After each task the session is auto-submitted and the workspace is reset via git.
+    """
+    import subprocess
+
+    bench_dir = Path.home() / ".klat" / "bench"
+    config_file = bench_dir / "config.json"
+    active_version = None
+
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                active_version = cfg.get("active_version")
+        except Exception:
+            pass
+
+    if not active_version:
+        klat.log("Error: No active benchmark version configured. Run /bench select [name] [number] first.")
+        return None
+
+    tasks_dir = bench_dir / active_version / "tasks"
+    if not tasks_dir.is_dir():
+        klat.log(f"Error: Tasks directory not found: {tasks_dir}")
+        return None
+
+    # Collect tasks that have a 'sort' field
+    ordered_tasks: list[tuple[int, str]] = []
+    for task_file in tasks_dir.glob("*.json"):
+        try:
+            with open(task_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            sort_val = data.get("sort")
+            if sort_val is not None:
+                ordered_tasks.append((int(sort_val), task_file.stem))
+        except Exception:
+            pass
+
+    if not ordered_tasks:
+        klat.log("Error: No tasks with a 'sort' field found in the active benchmark.")
+        klat.ui.print_dim("Run 'uv run klat-bench/add_sort_fields.py' to assign sort order to tasks.")
+        return None
+
+    ordered_tasks.sort(key=lambda x: x[0])
+    total = len(ordered_tasks)
+
+    klat.ui.print_accent(f"Running all {total} tasks in order:")
+    for sort_val, tid in ordered_tasks:
+        klat.ui.print_dim(f"  [{sort_val:>2}] {tid}")
+
+    last_agent = agent
+    for idx, (sort_val, tid) in enumerate(ordered_tasks, start=1):
+        sep = "=" * 60
+        klat.ui.print_accent(sep)
+        klat.ui.print_accent(f"[{idx}/{total}] Starting: {tid}  (difficulty {sort_val})")
+        klat.ui.print_accent(sep)
+
+        last_agent = _bench_start(tid, last_agent)
+
+        # Auto-submit after the task completes
+        klat.ui.print_accent(f"Task '{tid}' finished. Auto-submitting...")
+        _bench_submit(last_agent)
+
+        # Reset workspace to HEAD before the next task
+        if idx < total:
+            klat.ui.print_accent("Resetting workspace to HEAD for the next task...")
+            try:
+                result = subprocess.run(
+                    ["git", "reset", "--hard", "HEAD"],
+                    cwd=str(Path.cwd()),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    klat.ui.print_dim(f"  git reset: {result.stdout.strip()}")
+                else:
+                    klat.log(f"Warning: git reset returned exit code {result.returncode}: {result.stderr.strip()}")
+            except Exception as e:
+                klat.log(f"Warning: git reset failed: {e}")
+
+    klat.ui.print_accent("All benchmark tasks completed!")
+    return last_agent
+
 
 def _bench_submit(agent: Any) -> None:
     from src import sessions
@@ -574,12 +678,15 @@ def _bench_submit(agent: Any) -> None:
     except Exception as e:
         klat.log(f"Error writing telemetry log: {e}")
         
-    # Clean up active blacklist file if it exists
-    blacklist_file = Path.home() / ".klat" / "bench" / "active_blacklist.json"
-    if blacklist_file.exists():
-        try:
-            blacklist_file.unlink()
-        except Exception:
-            pass
+    # Clean up active blacklist and allowlist files if they exist
+    for _cleanup_file in (
+        Path.home() / ".klat" / "bench" / "active_blacklist.json",
+        Path.home() / ".klat" / "bench" / "active_allowlist.json",
+    ):
+        if _cleanup_file.exists():
+            try:
+                _cleanup_file.unlink()
+            except Exception:
+                pass
             
     klat.ui.print_accent("Benchmark submission completed successfully!")

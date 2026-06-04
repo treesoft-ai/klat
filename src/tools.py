@@ -61,6 +61,46 @@ def _is_blacklisted(path_or_str: str | Path | list[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Allowlist helpers
+# ---------------------------------------------------------------------------
+
+def _get_active_allowlist() -> dict[str, bool] | None:
+    """Read ~/.klat/bench/active_allowlist.json if a bench session is active.
+
+    Returns:
+        A dict mapping tool names to bool (True = allowed), or None if no
+        allowlist is in effect (meaning all tools are allowed).
+    """
+    from src import sessions
+    session_id = sessions.get_active_session_id()
+    if not (session_id and session_id.startswith("bench_")):
+        return None
+
+    allowlist_file = Path.home() / ".klat" / "bench" / "active_allowlist.json"
+    if not allowlist_file.exists():
+        return None
+
+    try:
+        with open(allowlist_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {str(k): bool(v) for k, v in data.items()}
+    except Exception:
+        pass
+    return None
+
+
+def _is_tool_allowed(tool_name: str) -> bool:
+    """Return False if the tool is explicitly disabled in the active allowlist."""
+    allowlist = _get_active_allowlist()
+    if allowlist is None:
+        # No allowlist file → all tools permitted
+        return True
+    # If the tool appears in the map, honour its value; absent tools default to allowed
+    return allowlist.get(tool_name, True)
+
+
+# ---------------------------------------------------------------------------
 # Tool declarations (JSON-schema, provider-agnostic)
 # ---------------------------------------------------------------------------
 
@@ -1351,8 +1391,17 @@ def get_all_tool_declarations() -> list[dict]:
     return TOOL_DECLARATIONS + dynamic_decls
 
 
+_TOOL_UNAVAILABLE_MSG = (
+    "This tool is currently not available. Please try a different approach."
+)
+
+
 def dispatch(name: str, args: dict) -> str:
     try:
+        # Allowlist gate — must run before any tool logic
+        if not _is_tool_allowed(name):
+            return _TOOL_UNAVAILABLE_MSG
+
         if name in ("read_file", "read_file_slice"):
             return _read_file(
                 args["path"],
