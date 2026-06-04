@@ -6,7 +6,8 @@
     {
       "name": "bench",
       "description": "Control Klat Benchmarking operations (/bench create, /bench select, /bench start, /bench submit)",
-      "entrypoint": "handle_bench"
+      "entrypoint": "handle_bench",
+      "autocomplete": "suggest_bench"
     }
   ],
   "tools": []

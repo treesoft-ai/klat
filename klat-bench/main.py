@@ -547,3 +547,105 @@ def _bench_finalize(agent: Any, task_id: str, task_results_dir: Path, backup_dir
 
     klat.ui.print_accent(f"Benchmark task '{task_id}' completed.")
 
+
+def suggest_bench(remainder: str, document: Any = None) -> str | None:
+    """
+    Suggest subcommands, names/versions, or task IDs for Klat Benchmarking operations:
+    - /bench create [name] [num]
+    - /bench select [name] [num]
+    - /bench start [task_id]
+    """
+    if " " not in remainder:
+        for sc in ["create", "select", "start"]:
+            if sc.startswith(remainder) and sc != remainder:
+                return sc[len(remainder):]
+        return None
+
+    # Parse subcommand and subcommand argument
+    parts = remainder.split(None, 1)
+    subcmd = parts[0].lower()
+    sub_arg = parts[1] if len(parts) > 1 else ""
+
+    if subcmd in ("select", "create"):
+        sub_parts = sub_arg.split()
+        # If we are completing the benchmark name
+        if len(sub_parts) == 0 or (len(sub_parts) == 1 and not sub_arg.endswith(" ")):
+            name_prefix = sub_parts[0] if sub_parts else ""
+            names = _get_benchmark_names()
+            for name in names:
+                if name.startswith(name_prefix) and name != name_prefix:
+                    return name[len(name_prefix):]
+        # If we are completing the benchmark version number
+        elif len(sub_parts) == 1 or (len(sub_parts) == 2 and not sub_arg.endswith(" ")):
+            name = sub_parts[0]
+            num_prefix = sub_parts[1] if len(sub_parts) > 1 else ""
+            nums = _get_benchmark_nums(name)
+            for num in nums:
+                if num.startswith(num_prefix) and num != num_prefix:
+                    return num[len(num_prefix):]
+        return None
+
+    if subcmd == "start":
+        tasks = _get_benchmark_tasks()
+        for task in tasks:
+            if task.startswith(sub_arg) and task != sub_arg:
+                return task[len(sub_arg):]
+        return None
+
+    return None
+
+def _get_benchmark_names() -> list[str]:
+    bench_dir = Path.home() / ".klat" / "bench"
+    if not bench_dir.is_dir():
+        return []
+    try:
+        names = set()
+        for entry in bench_dir.iterdir():
+            if entry.is_dir() and entry.name not in ("active_backup", "backup"):
+                name, _, _ = entry.name.rpartition('-')
+                if name:
+                    names.add(name)
+                else:
+                    names.add(entry.name)
+        return sorted(list(names))
+    except Exception:
+        return []
+
+def _get_benchmark_nums(name: str) -> list[str]:
+    bench_dir = Path.home() / ".klat" / "bench"
+    if not bench_dir.is_dir():
+        return []
+    try:
+        nums = []
+        for entry in bench_dir.iterdir():
+            if entry.is_dir() and entry.name not in ("active_backup", "backup"):
+                b_name, _, b_num = entry.name.rpartition('-')
+                if b_name == name and b_num:
+                    nums.append(b_num)
+        return sorted(nums)
+    except Exception:
+        return []
+
+def _get_benchmark_tasks() -> list[str]:
+    bench_dir = Path.home() / ".klat" / "bench"
+    config_file = bench_dir / "config.json"
+    if not config_file.exists():
+        return []
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            active_version = cfg.get("active_version")
+        if not active_version:
+            return []
+        tasks_dir = bench_dir / active_version / "tasks"
+        if not tasks_dir.is_dir():
+            return []
+        tasks = []
+        for entry in tasks_dir.iterdir():
+            if entry.is_file() and entry.suffix == ".json":
+                tasks.append(entry.stem)
+        return sorted(tasks)
+    except Exception:
+        return []
+
+

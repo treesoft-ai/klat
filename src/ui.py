@@ -201,6 +201,25 @@ if HAS_PROMPT_TOOLKIT:
                         return Suggestion(name[len(arg):])
                 return None
 
+            # Smart completion for dynamic commands
+            if text.startswith("/"):
+                cmd_line = text[1:]
+                if " " in cmd_line:
+                    cmd_name, remainder = cmd_line.split(" ", 1)
+                    try:
+                        from src.extensions import DYNAMIC_COMMANDS
+                        if cmd_name in DYNAMIC_COMMANDS:
+                            ac_handler = DYNAMIC_COMMANDS[cmd_name].get("autocomplete")
+                            if ac_handler:
+                                try:
+                                    suggestion_str = ac_handler(remainder, document)
+                                    if suggestion_str:
+                                        return Suggestion(suggestion_str)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
             # Default command completion
             try:
                 from src.extensions import DYNAMIC_COMMANDS

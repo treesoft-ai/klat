@@ -289,10 +289,13 @@ def load_extensions(silent: bool = True) -> int:
                             if not silent:
                                 _safe_print(f"  {ui.GREEN}!{ui.RESET} Command '{name}' entrypoint '{entrypoint}' not found in {ext_name}'s main.py")
                             continue
+                        autocomplete_entry = cmd.get("autocomplete")
+                        autocomplete_handler = getattr(mod, autocomplete_entry, None) if autocomplete_entry else None
                         DYNAMIC_COMMANDS[name] = {
                             "handler": handler,
                             "description": cmd.get("description", ""),
-                            "entrypoint": entrypoint
+                            "entrypoint": entrypoint,
+                            "autocomplete": autocomplete_handler
                         }
 
                     count += 1
