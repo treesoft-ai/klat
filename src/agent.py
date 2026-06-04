@@ -620,7 +620,10 @@ def resolve_mentions(message: str) -> str:
 
 
 class KlatAgent:
+    active_instance: KlatAgent | None = None
+
     def __init__(self, project: str, location: str) -> None:
+        KlatAgent.active_instance = self
         self._project  = project
         self._location = location
         self._gemini_history: list = []

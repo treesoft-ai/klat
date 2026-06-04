@@ -202,7 +202,13 @@ if HAS_PROMPT_TOOLKIT:
                 return None
 
             # Default command completion
-            for cmd in self.commands:
+            try:
+                from src.extensions import DYNAMIC_COMMANDS
+                all_cmds = self.commands + [f"/{c}" for c in DYNAMIC_COMMANDS]
+            except Exception:
+                all_cmds = self.commands
+
+            for cmd in all_cmds:
                 if cmd.startswith(text) and cmd != text:
                     return Suggestion(cmd[len(text):])
             return None

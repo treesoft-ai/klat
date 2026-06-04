@@ -1,0 +1,13 @@
+{
+  "name": "klat-bench",
+  "version": "1.0.0",
+  "description": "Zero-evaluator, deterministic sandbox runner that evaluates AI agent performance without the agent realizing it is being tested.",
+  "commands": [
+    {
+      "name": "bench",
+      "description": "Control Klat Benchmarking operations (/bench create, /bench select, /bench start, /bench submit)",
+      "entrypoint": "handle_bench"
+    }
+  ],
+  "tools": []
+}

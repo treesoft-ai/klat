@@ -11,7 +11,7 @@ from src.agent import KlatAgent
 from src.extensions import (
     load_extensions, export_extension, import_extension,
     list_extensions, enable_extension, disable_extension, remove_extension,
-    create_extension
+    create_extension, DYNAMIC_COMMANDS
 )
 
 
@@ -612,6 +612,10 @@ def main() -> None:
                         _cmd_help()
                     elif cmd == "reset":
                         agent = _cmd_session("new", agent, project, location)
+                    elif cmd in DYNAMIC_COMMANDS:
+                        res = DYNAMIC_COMMANDS[cmd]["handler"](remainder, agent)
+                        if isinstance(res, KlatAgent):
+                            agent = res
                     else:
                         agent_error(f"Unknown command /{cmd}. Type /help for commands.")
                 finally:

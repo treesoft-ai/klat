@@ -25,6 +25,7 @@ def _safe_print(text: str) -> None:
 
 CUSTOM_RULES: list[str] = []
 DYNAMIC_TOOLS: dict[str, dict] = {}
+DYNAMIC_COMMANDS: dict[str, dict] = {}
 
 def _log(msg: str) -> None:
     """Extension log message."""
@@ -279,6 +280,21 @@ def load_extensions(silent: bool = True) -> int:
                             "handler": handler
                         }
 
+                    # Register commands
+                    for cmd in manifest.get("commands", []):
+                        name = cmd["name"]
+                        entrypoint = cmd["entrypoint"]
+                        handler = getattr(mod, entrypoint, None)
+                        if handler is None:
+                            if not silent:
+                                _safe_print(f"  {ui.GREEN}!{ui.RESET} Command '{name}' entrypoint '{entrypoint}' not found in {ext_name}'s main.py")
+                            continue
+                        DYNAMIC_COMMANDS[name] = {
+                            "handler": handler,
+                            "description": cmd.get("description", ""),
+                            "entrypoint": entrypoint
+                        }
+
                     count += 1
                     if not silent:
                         _safe_print(f"  {ui.GREEN}✓{ui.RESET} Loaded extension: {ext_name} (version {manifest.get('version', '1.0.0')})")
@@ -363,6 +379,10 @@ def disable_extension(name: str) -> None:
                 tool_name = tool["name"]
                 if tool_name in DYNAMIC_TOOLS:
                     del DYNAMIC_TOOLS[tool_name]
+            for cmd in manifest.get("commands", []):
+                cmd_name = cmd["name"]
+                if cmd_name in DYNAMIC_COMMANDS:
+                    del DYNAMIC_COMMANDS[cmd_name]
         except Exception:
             pass
 
@@ -392,6 +412,10 @@ def remove_extension(name: str) -> None:
                 tool_name = tool["name"]
                 if tool_name in DYNAMIC_TOOLS:
                     del DYNAMIC_TOOLS[tool_name]
+            for cmd in manifest.get("commands", []):
+                cmd_name = cmd["name"]
+                if cmd_name in DYNAMIC_COMMANDS:
+                    del DYNAMIC_COMMANDS[cmd_name]
         except Exception:
             pass
 

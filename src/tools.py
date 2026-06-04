@@ -7,10 +7,57 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import json
 from pathlib import Path
 
 # Working directory captured once at startup — all relative paths resolve here.
 WORK_DIR = Path.cwd()
+
+# ---------------------------------------------------------------------------
+# Blacklist helpers
+# ---------------------------------------------------------------------------
+
+_blacklist_cache = None
+
+def _get_active_blacklist() -> list[str]:
+    """Read ~/.klat/bench/active_blacklist.json dynamically if Klat Bench is active."""
+    global _blacklist_cache
+    from src import sessions
+    session_id = sessions.get_active_session_id()
+    if not (session_id and session_id.startswith("bench_")):
+        _blacklist_cache = None
+        return []
+        
+    blacklist_file = Path.home() / ".klat" / "bench" / "active_blacklist.json"
+    if not blacklist_file.exists():
+        _blacklist_cache = None
+        return []
+        
+    try:
+        with open(blacklist_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                _blacklist_cache = [str(item).lower().strip() for item in data]
+                return _blacklist_cache
+    except Exception:
+        pass
+    return []
+
+def _is_blacklisted(path_or_str: str | Path | list[str]) -> bool:
+    """Return True if the target or any part of the path is in the active blacklist."""
+    blacklist = _get_active_blacklist()
+    if not blacklist:
+        return False
+        
+    if isinstance(path_or_str, list):
+        return any(_is_blacklisted(p) for p in path_or_str)
+        
+    p_str = str(path_or_str).replace("\\", "/").lower()
+    
+    for item in blacklist:
+        if item in p_str:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -555,10 +602,18 @@ TOOL_DECLARATIONS = [
 
 def _resolve(path: str) -> Path:
     """Resolve a path relative to WORK_DIR (unless it is already absolute)."""
+    if _is_blacklisted(path):
+        raise FileNotFoundError(f"[Errno 2] No such file or directory: '{path}'")
+        
     p = Path(path).expanduser()
     if not p.is_absolute():
         p = WORK_DIR / p
-    return p.resolve()
+    resolved = p.resolve()
+    
+    if _is_blacklisted(resolved):
+        raise FileNotFoundError(f"[Errno 2] No such file or directory: '{path}'")
+        
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +712,7 @@ def _list_dir(path: str) -> str:
         return f"Error: not a directory: {p}"
     try:
         entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
+        entries = [e for e in entries if not _is_blacklisted(e.name)]
         lines = [f"{e.name}/" if e.is_dir() else e.name for e in entries]
         return "\n".join(lines) if lines else "(empty directory)"
     except Exception as e:
@@ -684,8 +740,8 @@ def _search_files(
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=15
             )
-            out = result.stdout.strip()
-            return out if out else "(no matches)"
+            out_lines = [line for line in result.stdout.splitlines() if not _is_blacklisted(line.split(":", 1)[0])]
+            return "\n".join(out_lines) if out_lines else "(no matches)"
         except Exception:
             pass  # fall through to Python search
 
@@ -703,7 +759,7 @@ def _search_files(
         targets = [search_path]
     else:
         glob = f"**/{include}" if include else "**/*"
-        targets = [f for f in base.glob(glob) if f.is_file()]
+        targets = [f for f in base.glob(glob) if f.is_file() and not _is_blacklisted(f)]
 
     matches: list[str] = []
     for fp in sorted(targets):
@@ -720,6 +776,34 @@ def _search_files(
 
 
 def _run_command(command: str, cwd: str | None, timeout: int) -> str:
+    # Check if command itself is blacklisted
+    if _is_blacklisted(command):
+        return f"sh: 1: {command.split()[0] if command.split() else 'command'}: not found\n[exit code: 127]"
+
+    # Intercept extension commands starting with /
+    cmd_stripped = command.strip()
+    if cmd_stripped.startswith("/"):
+        parts = cmd_stripped[1:].split(None, 1)
+        cmd_name = parts[0].lower()
+        remainder = parts[1] if len(parts) > 1 else ""
+        try:
+            from src.extensions import DYNAMIC_COMMANDS
+            if cmd_name in DYNAMIC_COMMANDS:
+                import io
+                import contextlib
+                f = io.StringIO()
+                with contextlib.redirect_stdout(f):
+                    DYNAMIC_COMMANDS[cmd_name]["handler"](remainder, None)
+                out = f.getvalue()
+                parts_out = []
+                if out.strip():
+                    out_lines = [line for line in out.splitlines() if not _is_blacklisted(line)]
+                    parts_out.append("\n".join(out_lines).rstrip())
+                parts_out.append("[exit code: 0]")
+                return "\n".join(parts_out)
+        except Exception as e:
+            return f"Error executing extension command: {e}\n[exit code: 1]"
+
     run_cwd = _resolve(cwd) if cwd else WORK_DIR
     try:
         result = subprocess.run(
@@ -732,9 +816,13 @@ def _run_command(command: str, cwd: str | None, timeout: int) -> str:
         )
         parts = []
         if result.stdout.strip():
-            parts.append(result.stdout.rstrip())
+            out_lines = [line for line in result.stdout.splitlines() if not _is_blacklisted(line)]
+            parts.append("\n".join(out_lines).rstrip())
         if result.stderr.strip():
-            parts.append(f"[stderr]\n{result.stderr.rstrip()}")
+            err_lines = [line for line in result.stderr.splitlines() if not _is_blacklisted(line)]
+            parts.append(f"[stderr]\n" + "\n".join(err_lines).rstrip())
+            
+        parts = [p for p in parts if p.strip()]
         parts.append(f"[exit code: {result.returncode}]")
         return "\n".join(parts)
     except subprocess.TimeoutExpired:
@@ -777,6 +865,7 @@ def _find_file(pattern: str, path: str = ".") -> str:
         return f"Error: not a directory: {base}"
     try:
         matches = sorted(base.rglob(pattern))
+        matches = [m for m in matches if not _is_blacklisted(m)]
         return "\n".join(str(m) for m in matches) if matches else "(no matches)"
     except Exception as e:
         return f"Error searching {base}: {e}"
@@ -946,6 +1035,11 @@ def _git(op: str, args: list[str] | None, cwd: str | None) -> str:
     git_exe = shutil.which("git")
     if not git_exe:
         return "Error: git is not installed or not found in PATH."
+        
+    # Check arguments for blacklist
+    if args and any(_is_blacklisted(arg) for arg in args):
+        return f"fatal: pathspec '{args[0]}' did not match any files"
+        
     run_cwd = _resolve(cwd) if cwd else WORK_DIR
     cmd = [git_exe, op] + (args or [])
     try:
@@ -955,9 +1049,14 @@ def _git(op: str, args: list[str] | None, cwd: str | None) -> str:
         )
         parts = []
         if result.stdout.strip():
-            parts.append(result.stdout.rstrip())
+            out_lines = [line for line in result.stdout.splitlines() if not _is_blacklisted(line)]
+            parts.append("\n".join(out_lines).rstrip())
         if result.stderr.strip():
-            parts.append(f"[stderr]\n{result.stderr.rstrip()}")
+            err_lines = [line for line in result.stderr.splitlines() if not _is_blacklisted(line)]
+            parts.append(f"[stderr]\n" + "\n".join(err_lines).rstrip())
+            
+        parts = [p for p in parts if p.strip()]
+        
         if not parts:
             parts.append(f"(git {op}: no output, exit code {result.returncode})")
         else:
@@ -1020,6 +1119,7 @@ def _tree(
 ) -> str:
     _SKIP = {"__pycache__", ".git", ".venv", "node_modules", ".mypy_cache",
              ".pytest_cache", ".tox", "dist", "build", ".eggs"}
+    _SKIP.update(_get_active_blacklist())
 
     root = _resolve(path)
     if not root.exists():
