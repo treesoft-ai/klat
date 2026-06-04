@@ -160,6 +160,7 @@ def _build_system_prompt() -> str:
         f"{dynamic_tools_text}\n"
 
         "## Rules\n"
+        "- No 'done' tool: There is no 'done' tool available in this environment. You must NOT attempt to call the 'done' tool under any circumstances. When you are finished, simply reply with a direct text response to the user.\n"
         "- Git Tool Usage: NEVER use run_command for any git operations (e.g. git status, git log, git diff). ALWAYS use the specialized git tool (e.g., git(op='status'), git(op='log', args=['-15'])).\n"
         "- Commit Suggestion Sequence: When asked to analyze changes and/or suggest a commit message, you MUST invoke git(op='status'), git(op='diff'), and git(op='log', args=['-15']) in parallel on your very first turn. You are strictly forbidden from proposing any commit message until you have fetched and analyzed the log results.\n"
         "- Commit Style Matching: When generating or suggesting a commit message, you MUST follow this exact reasoning sequence in your response:\n"

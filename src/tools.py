@@ -632,27 +632,6 @@ TOOL_DECLARATIONS = [
             },
             "required": []
         }
-    },
-    {
-        "name": "done",
-        "description": (
-            "Signal that you have completed the task. Call this when you are fully finished "
-            "and have no more actions to take. Optionally pass a summary of what was accomplished."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "summary": {
-                    "type": "string",
-                    "description": "Optional summary of what was completed.",
-                },
-                "task_complete": {
-                    "type": "boolean",
-                    "description": "Set to true to confirm task completion.",
-                },
-            },
-            "required": [],
-        },
     }
 ]
 
@@ -1612,9 +1591,6 @@ def _dispatch_inner(name: str, args: dict) -> str:
                 include_latest=bool(args.get("include_latest", False)),
             )
 
-        if name == "done":
-            summary = args.get("summary", "")
-            return f"Task complete.{(' ' + summary) if summary else ''}"
         # Check dynamic tools
         from src.extensions import DYNAMIC_TOOLS
         if name in DYNAMIC_TOOLS:
