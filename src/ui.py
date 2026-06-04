@@ -450,8 +450,43 @@ def agent_thought(text: str) -> None:
 
 def agent_step(action: str, detail: str = "") -> None:
     """Print a single agent action step."""
-    detail_str = f"  {DIM}{detail}{RESET}" if detail else ""
-    print(f"  {GREEN}→{RESET} {action}{detail_str}")
+    import time
+    import sys
+
+    action_len = len(action)
+    detail_part = f"  {detail}" if detail else ""
+    full_len = action_len + len(detail_part)
+    
+    prefix = f"  {GREEN}→{RESET} "
+    delay = 0.04
+    
+    for step in range(1, full_len + 1):
+        if step <= action_len:
+            visible_act = action[:step]
+            if step < full_len:
+                grad_part = colorize_gradient(visible_act[:-1])
+                lead_char = visible_act[-1]
+                colored_text = f"{grad_part}\033[1;37m{lead_char}\033[0m"
+            else:
+                colored_text = colorize_gradient(visible_act)
+        else:
+            act_part = colorize_gradient(action)
+            revealed_detail = detail_part[:step - action_len]
+            if step < full_len:
+                dim_part = f"{DIM}{revealed_detail[:-1]}{RESET}" if len(revealed_detail) > 1 else ""
+                lead_char = revealed_detail[-1]
+                colored_text = f"{act_part}{dim_part}\033[1;37m{lead_char}\033[0m"
+            else:
+                dim_part = f"{DIM}{revealed_detail}{RESET}"
+                colored_text = f"{act_part}{dim_part}"
+                
+        sys.stdout.write(f"\r{prefix}{colored_text}\033[K")
+        sys.stdout.flush()
+        time.sleep(delay)
+        
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
     try:
         from src import sessions
         sessions.record_ui_event("step", action=action, detail=detail)
