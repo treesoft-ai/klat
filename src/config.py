@@ -39,9 +39,10 @@ _state: dict = {
     "provider": None,   # None until ensure_env() resolves one
     "model":    None,   # None → use provider's default_model
     "reasoning": "none",
+    "streaming": True,
 }
 
-_config: dict[str, str] = {}
+_config: dict = {}
 
 
 def current_reasoning() -> str:
@@ -57,6 +58,16 @@ def set_reasoning(value: str) -> None:
     _state["reasoning"] = val
     _persist()
 
+
+def current_streaming() -> bool:
+    """Return whether streaming is enabled."""
+    return _state.get("streaming", True)
+
+
+def set_streaming(value: bool) -> None:
+    """Set and persist the streaming configuration option."""
+    _state["streaming"] = value
+    _persist()
 
 
 def current_provider() -> str:
@@ -90,7 +101,7 @@ def set_model(model: str) -> None:
 
 
 def _persist() -> None:
-    """Write provider, model & reasoning back to config.json."""
+    """Write provider, model, reasoning & streaming back to config.json."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     current_data = {}
     if CONFIG_FILE.exists():
@@ -102,6 +113,7 @@ def _persist() -> None:
     current_data["provider"] = _state["provider"] or ""
     current_data["model"] = _state["model"] or ""
     current_data["reasoning"] = _state["reasoning"] or "none"
+    current_data["streaming"] = current_streaming()
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, indent=2)
@@ -263,13 +275,20 @@ def _load_config() -> None:
                 data = json.load(f)
                 if isinstance(data, dict):
                     for k, v in data.items():
-                        _config[k.lower().strip()] = str(v)
+                        key = k.lower().strip()
+                        if key == "streaming":
+                            if isinstance(v, bool):
+                                _config[key] = v
+                            else:
+                                _config[key] = str(v).lower().strip() == "true"
+                        else:
+                            _config[key] = str(v)
         except Exception as e:
             print(f"Error reading config: {e}")
 
     for k, v in _config.items():
-        if k not in ("provider", "model"):
-            os.environ[k.upper()] = v
+        if k not in ("provider", "model", "streaming"):
+            os.environ[k.upper()] = str(v)
 
 
 # ---------------------------------------------------------------------------
@@ -296,10 +315,11 @@ def ensure_env() -> tuple[str, str]:
         run_full_onboarding()
         _load_config()  # reload to pick up keys just written
 
-    # Restore persisted provider / model / reasoning choice
+    # Restore persisted provider / model / reasoning / streaming choice
     saved_provider = _config.get("provider", "").strip()
     saved_model    = _config.get("model", "").strip()
     saved_reasoning = _config.get("reasoning", "none").strip().lower()
+    saved_streaming = _config.get("streaming")
 
     if saved_provider and saved_provider in PROVIDERS:
         _state["provider"] = saved_provider
@@ -307,6 +327,10 @@ def ensure_env() -> tuple[str, str]:
         _state["model"] = saved_model
     if saved_reasoning in {"none", "minimal", "low", "medium", "high", "xhigh"}:
         _state["reasoning"] = saved_reasoning
+    if saved_streaming is not None:
+        _state["streaming"] = bool(saved_streaming)
+    else:
+        _state["streaming"] = True
 
     # Find the best available provider
     available = configured_providers()

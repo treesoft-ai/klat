@@ -122,6 +122,7 @@ if HAS_PROMPT_TOOLKIT:
                 "/provider",
                 "/model",
                 "/reasoning",
+                "/streaming",
                 "/extension list",
                 "/extension create",
                 "/extension export",
@@ -163,6 +164,15 @@ if HAS_PROMPT_TOOLKIT:
                 for lvl in levels:
                     if lvl.startswith(arg) and lvl != arg:
                         return Suggestion(lvl[len(arg):])
+                return None
+
+            # Smart completion for /streaming
+            if text.startswith("/streaming "):
+                arg = text[len("/streaming "):]
+                options = ["on", "off"]
+                for opt in options:
+                    if opt.startswith(arg) and opt != arg:
+                        return Suggestion(opt[len(arg):])
                 return None
 
             # Smart completion for /extension enable/disable/remove

@@ -15,7 +15,7 @@ from typing import Any
 from pathlib import Path
 
 from src import ui
-from src.config import current_provider, current_model, current_reasoning
+from src.config import current_provider, current_model, current_reasoning, current_streaming
 from src.providers import PROVIDERS, get_provider
 from src.tools import TOOL_DECLARATIONS, WORK_DIR, dispatch
 
@@ -241,7 +241,7 @@ def _args_summary(args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _run_gemini(message: str, history: list, project: str, location: str) -> str:
-    """One chat turn (may involve multiple tool calls) using google-genai."""
+    """One chat turn (may involve multiple tool calls) using google-genai with streaming."""
     from google import genai
     from google.genai import types
 
@@ -299,7 +299,7 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
     history.append(types.Content(role="user", parts=[types.Part(text=message)]))
 
     while True:
-        response = client.models.generate_content(
+        response_stream = client.models.generate_content_stream(
             model=model,
             contents=history,
             config=types.GenerateContentConfig(
@@ -309,25 +309,62 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
             ),
         )
 
+        all_parts = []
+        printed_thought_prefix = False
+        printed_reply_prefix = False
+        accumulated_thoughts = []
+
+        for chunk in response_stream:
+            if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
+                continue
+
+            for p in chunk.candidates[0].content.parts:
+                all_parts.append(p)
+
+                # Stream thoughts
+                if getattr(p, "thought", False) and p.text:
+                    accumulated_thoughts.append(p.text)
+                    if current_streaming():
+                        if not printed_thought_prefix:
+                            print(f"  {ui.DIM}⌁ thinking...{ui.RESET}")
+                            print(f"    {ui.DIM}\033[3m", end="", flush=True)
+                            printed_thought_prefix = True
+                        formatted_chunk = p.text.replace("\n", f"\n    {ui.DIM}\033[3m")
+                        print(formatted_chunk, end="", flush=True)
+
+                # Stream reply content
+                elif hasattr(p, "text") and p.text:
+                    if current_streaming():
+                        if printed_thought_prefix:
+                            print(ui.RESET)
+                            printed_thought_prefix = False
+                        if not printed_reply_prefix:
+                            print(f"{ui.GREEN}·{ui.RESET} ", end="", flush=True)
+                            printed_reply_prefix = True
+                        print(p.text, end="", flush=True)
+
+        if printed_thought_prefix:
+            print(ui.RESET)
+        if printed_reply_prefix:
+            print()
+
+        if not current_streaming() and accumulated_thoughts:
+            ui.agent_thought("".join(accumulated_thoughts))
+
         history.append(types.Content(
             role="model",
-            parts=response.candidates[0].content.parts,
+            parts=all_parts,
         ))
-
-        # Print any thoughts first
-        for p in response.candidates[0].content.parts:
-            if getattr(p, "thought", False) and p.text:
-                ui.agent_thought(p.text)
 
         fn_calls = [
             p.function_call
-            for p in response.candidates[0].content.parts
-            if p.function_call
+            for p in all_parts
+            if getattr(p, "function_call", None)
         ]
 
         if not fn_calls:
             parts = []
-            for p in response.candidates[0].content.parts:
+            for p in all_parts:
                 if getattr(p, "thought", False):
                     continue
                 elif hasattr(p, "text") and p.text:
@@ -370,7 +407,7 @@ def _get_openai_tools() -> list[dict]:
 
 
 def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
-    """One chat turn (may involve multiple tool calls) using the OpenAI SDK."""
+    """One chat turn (may involve multiple tool calls) using the OpenAI SDK with streaming."""
     from openai import OpenAI
 
     provider_name = current_provider()
@@ -408,11 +445,12 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
 
     while True:
         try:
-            response = client.chat.completions.create(
+            response_stream = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 tools=_get_openai_tools(),
                 tool_choice="auto",
+                stream=True,
                 **extra_params
             )
         except Exception as e:
@@ -424,75 +462,191 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                     ui.agent_step("reasoning-fallback", "Not supported by this model; retrying")
                 else:
                     ui.agent_step("reasoning-fallback", "Unsupported or error encountered; retrying")
-                response = client.chat.completions.create(
+                response_stream = client.chat.completions.create(
                     model=model,
                     messages=messages,
                     tools=_get_openai_tools(),
-                    tool_choice="auto"
+                    tool_choice="auto",
+                    stream=True
                 )
             else:
                 raise e
 
-        choices = getattr(response, "choices", None)
-        if not choices:
-            raise RuntimeError(
-                f"Model returned a response with no choices (model={model}). "
-                "This usually means the model refused, errored, or the context was too long."
+        # Stream parser state
+        accumulated_content = ""
+        accumulated_reasoning = ""
+        accumulated_tool_calls = {}
+
+        printed_thought_prefix = False
+        printed_reply_prefix = False
+        in_think_mode = False
+        processed_len = 0
+
+        for chunk in response_stream:
+            choices = getattr(chunk, "choices", None)
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+
+            # 1. Handle reasoning/thoughts from specific fields (reasoning_content, reasoning, etc.)
+            reasoning_chunk = (
+                getattr(delta, "reasoning_content", None) or
+                getattr(delta, "reasoning", None)
             )
-        choice = choices[0]
-        message_obj = getattr(choice, "message", None)
-        if message_obj is None:
-            raise RuntimeError(f"Model returned a choice with no message (model={model}).")
+            if reasoning_chunk:
+                accumulated_reasoning += reasoning_chunk
+                if current_streaming():
+                    if not printed_thought_prefix:
+                        print(f"  {ui.DIM}⌁ thinking...{ui.RESET}")
+                        print(f"    {ui.DIM}\033[3m", end="", flush=True)
+                        printed_thought_prefix = True
+                    formatted_chunk = reasoning_chunk.replace("\n", f"\n    {ui.DIM}\033[3m")
+                    print(formatted_chunk, end="", flush=True)
 
-        # Extract thoughts
-        thought = ""
-        raw_content = getattr(message_obj, "content", None)
-        content = raw_content if isinstance(raw_content, str) else ""
+            # 2. Handle reply content (which might contain <think>...</think> tags)
+            content_chunk = getattr(delta, "content", None) or ""
+            if content_chunk:
+                accumulated_content += content_chunk
 
-        if getattr(message_obj, "reasoning_content", None):
-            thought = message_obj.reasoning_content
-        elif getattr(message_obj, "reasoning", None):
-            thought = message_obj.reasoning
-        elif hasattr(message_obj, "model_extra") and message_obj.model_extra:
-            thought = message_obj.model_extra.get("reasoning") or message_obj.model_extra.get("reasoning_content")
-        elif isinstance(message_obj, dict):
-            thought = message_obj.get("reasoning_content") or message_obj.get("reasoning")
+                # Process the accumulated content buffer
+                while processed_len < len(accumulated_content):
+                    remaining = accumulated_content[processed_len:]
 
+                    if not in_think_mode:
+                        # Check for <think> tag
+                        if remaining.startswith("<think>"):
+                            in_think_mode = True
+                            processed_len += 7
+                            continue
+
+                        # Check for partial <think
+                        is_partial = False
+                        for i in range(1, 7):
+                            if remaining == "<think>"[:i]:
+                                is_partial = True
+                                break
+                        if is_partial:
+                            break
+
+                        # Regular content character
+                        char = remaining[0]
+                        if current_streaming():
+                            if printed_thought_prefix:
+                                print(ui.RESET)
+                                printed_thought_prefix = False
+                            if not printed_reply_prefix:
+                                print(f"{ui.GREEN}·{ui.RESET} ", end="", flush=True)
+                                printed_reply_prefix = True
+                            print(char, end="", flush=True)
+                        processed_len += 1
+                    else:
+                        # Inside <think> tag. Check for </think> tag
+                        if remaining.startswith("</think>"):
+                            in_think_mode = False
+                            processed_len += 8
+                            continue
+
+                        # Check for partial </think>
+                        is_partial = False
+                        for i in range(1, 8):
+                            if remaining == "</think>"[:i]:
+                                is_partial = True
+                                break
+                        if is_partial:
+                            break
+
+                        # Reasoning character inside <think> tag
+                        char = remaining[0]
+                        accumulated_reasoning += char
+                        if current_streaming():
+                            if not printed_thought_prefix:
+                                print(f"  {ui.DIM}⌁ thinking...{ui.RESET}")
+                                print(f"    {ui.DIM}\033[3m", end="", flush=True)
+                                printed_thought_prefix = True
+
+                            if char == "\n":
+                                print(f"\n    {ui.DIM}\033[3m", end="", flush=True)
+                            else:
+                                print(char, end="", flush=True)
+                        processed_len += 1
+
+            # 3. Handle tool calls
+            tool_calls = getattr(delta, "tool_calls", None) or []
+            for tc in tool_calls:
+                idx = tc.index
+                if idx not in accumulated_tool_calls:
+                    accumulated_tool_calls[idx] = {
+                        "id": "",
+                        "name": "",
+                        "arguments": ""
+                    }
+                if getattr(tc, "id", None):
+                    accumulated_tool_calls[idx]["id"] = tc.id
+                func = getattr(tc, "function", None)
+                if func:
+                    if getattr(func, "name", None):
+                        accumulated_tool_calls[idx]["name"] = func.name
+                    if getattr(func, "arguments", None):
+                        accumulated_tool_calls[idx]["arguments"] += func.arguments
+
+        # Clean up any active style prefixes
+        if printed_thought_prefix:
+            print(ui.RESET)
+        if printed_reply_prefix:
+            print()
+
+        if not current_streaming() and accumulated_reasoning.strip():
+            ui.agent_thought(accumulated_reasoning.strip())
+
+        # Build assistant message object
+        assistant_message = {"role": "assistant"}
+
+        # We construct the clean content (without <think> tag blocks)
+        # Our processed reply characters are accumulated_content except any characters inside think tags.
+        # Since we only printed regular characters, we can extract the clean reply from what we processed.
+        # Actually, let's just construct the clean reply by taking accumulated_content
+        # and stripping <think>...</think> using regex, which is extremely robust.
         import re
-        if isinstance(content, str):
-            think_match = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
-            if think_match:
-                thought = think_match.group(1).strip()
-                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-                try:
-                    message_obj.content = content
-                except Exception:
-                    pass
+        clean_reply = accumulated_content
+        think_match = re.search(r'<think>(.*?)</think>', clean_reply, re.DOTALL)
+        if think_match:
+            # Add to accumulated_reasoning if not already present
+            extracted_thought = think_match.group(1).strip()
+            if extracted_thought and extracted_thought not in accumulated_reasoning:
+                accumulated_reasoning = extracted_thought + "\n" + accumulated_reasoning
+            clean_reply = re.sub(r'<think>.*?</think>', '', clean_reply, flags=re.DOTALL).strip()
 
-        if thought:
-            ui.agent_thought(thought)
+        assistant_message["content"] = clean_reply.strip() if clean_reply.strip() else None
 
-        try:
-            messages.append(message_obj.model_dump(exclude_unset=True))
-        except Exception:
+        if accumulated_reasoning.strip():
+            # Support reasoning_content in history if provider understands it
+            assistant_message["reasoning_content"] = accumulated_reasoning.strip()
+
+        if accumulated_tool_calls:
+            assistant_message["tool_calls"] = []
+            for tc_idx, tc_data in sorted(accumulated_tool_calls.items()):
+                assistant_message["tool_calls"].append({
+                    "id": tc_data.get("id") or f"call_{tc_idx}",
+                    "type": "function",
+                    "function": {
+                        "name": tc_data.get("name"),
+                        "arguments": tc_data.get("arguments")
+                    }
+                })
+
+        messages.append(assistant_message)
+
+        if not accumulated_tool_calls:
+            return clean_reply.strip()
+
+        # Execute tool calls
+        for tc_idx, tc_data in sorted(accumulated_tool_calls.items()):
+            name = tc_data.get("name") or "unknown_tool"
             try:
-                messages.append(message_obj.model_dump())
-            except Exception:
-                pass
-
-        tool_calls = getattr(message_obj, "tool_calls", None) or []
-        if not tool_calls:
-            return content.strip() if isinstance(content, str) else ""
-
-        for tc in tool_calls:
-            if tc is None:
-                continue
-            func = getattr(tc, "function", None)
-            if func is None:
-                continue
-            name = getattr(func, "name", None) or "unknown_tool"
-            try:
-                args = json.loads(func.arguments or "{}")
+                args = json.loads(tc_data.get("arguments") or "{}")
             except (json.JSONDecodeError, TypeError):
                 args = {}
 
@@ -501,7 +655,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
 
             messages.append({
                 "role":         "tool",
-                "tool_call_id": getattr(tc, "id", "") or "",
+                "tool_call_id": tc_data.get("id") or "",
                 "content":      str(raw),
             })
 
@@ -671,7 +825,12 @@ class KlatAgent:
                 reply = _run_openai_compat(resolved_message, self._openai_messages)
 
             if reply:
-                ui.agent_print(reply)
+                from src import sessions
+                from src.ui import strip_markdown
+                if current_streaming():
+                    sessions.record_ui_event("reply", text=strip_markdown(reply))
+                else:
+                    ui.agent_print(reply)
 
             # Save session now that the reply is printed and added to transcript
             from src import sessions

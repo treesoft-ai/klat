@@ -84,6 +84,26 @@ def _cmd_reasoning(args: str) -> None:
         print("  Available levels: None, Minimal, Low, Medium, High, XHigh\n")
 
 
+def _cmd_streaming(args: str) -> None:
+    """Handle /streaming [on/off] — show or change the streaming setting."""
+    from src.config import current_streaming, set_streaming
+    val = args.strip().lower()
+
+    if not val:
+        status = "On" if current_streaming() else "Off"
+        print(f"\n  Streaming: {GREEN}{status}{RESET}\n")
+        return
+
+    if val in ("on", "true", "1"):
+        set_streaming(True)
+        agent_print(f"Streaming set to {GREEN}On{RESET}")
+    elif val in ("off", "false", "0"):
+        set_streaming(False)
+        agent_print(f"Streaming set to {GREEN}Off{RESET}")
+    else:
+        agent_error(f"Invalid streaming value '{args}'. Use 'on' or 'off'.")
+
+
 def _cmd_extension(args: str, agent: KlatAgent) -> None:
     """Handle /extension subcommands: list, export, import, enable, disable, remove, create, dev"""
     parts = args.strip().split(None, 1)
@@ -440,6 +460,8 @@ def _cmd_help() -> None:
   /model <name>          set model for this session
   /reasoning             show current reasoning level
   /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
+  /streaming             show current streaming status
+  /streaming <on|off>    toggle streaming response on or off
   /onboard               re-run onboarding (personal questions + provider setup)
   /create                analyze codebase and generate project reference KLAT.md
   /update                re-analyze codebase and overwrite KLAT.md
@@ -615,6 +637,8 @@ def main() -> None:
                         _cmd_model(remainder)
                     elif cmd == "reasoning":
                         _cmd_reasoning(remainder)
+                    elif cmd == "streaming":
+                        _cmd_streaming(remainder)
                     elif cmd == "onboard":
                         _cmd_onboard()
                     elif cmd == "extension":
