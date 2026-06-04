@@ -260,10 +260,11 @@ def _bench_start(task_id: str, agent: Any) -> Any:
         klat.log(f"Warning: Failed to initialize telemetry log: {_e}")
 
     # 5. Run the task
-    new_agent.chat(organic_prompt)
-
-    # 6. Finalize telemetry now that the agent has finished
-    _bench_finalize(new_agent, task_id, task_results_dir, backup_dir)
+    try:
+        new_agent.chat(organic_prompt)
+    finally:
+        # 6. Finalize telemetry now that the agent has finished
+        _bench_finalize(new_agent, task_id, task_results_dir, backup_dir)
 
     return new_agent
 

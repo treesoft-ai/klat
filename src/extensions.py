@@ -229,6 +229,51 @@ def import_extension(file_path_str: str) -> str:
     return ext_name
 
 # ---------------------------------------------------------------------------
+# Dev import extension
+# ---------------------------------------------------------------------------
+
+def import_extension_directory(folder_path_str: str) -> str:
+    """Import an extension directory directly into the extensions directory (dev mode)."""
+    folder_path = Path(folder_path_str).resolve()
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise FileNotFoundError(f"Extension directory not found: {folder_path_str}")
+
+    manifest_path = folder_path / "manifest.json"
+    main_path = folder_path / "main.py"
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Missing required manifest.json in {folder_path_str}")
+    if not main_path.exists():
+        raise FileNotFoundError(f"Missing required main.py in {folder_path_str}")
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise ValueError(f"Invalid manifest.json: {e}")
+
+    ext_name = manifest.get("name", "").strip()
+    if not ext_name:
+        raise ValueError("Extension manifest missing name")
+
+    # Warn user
+    _safe_print(f"\n{ui.GREEN}! SECURITY WARNING{ui.RESET}")
+    _safe_print(f"  Extension '{ext_name}' contains Python code that will run on your machine.")
+    confirm = input(f"  Are you sure you want to import this extension? (y/N): ").strip().lower()
+    if confirm not in ("y", "yes"):
+        raise PermissionError("Extension import cancelled by user.")
+
+    # Copy files directly
+    dest_dir = EXTENSIONS_DIR / ext_name
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(manifest_path, dest_dir / "manifest.json")
+    shutil.copy2(main_path, dest_dir / "main.py")
+
+    return ext_name
+
+# ---------------------------------------------------------------------------
 # Load extensions
 # ---------------------------------------------------------------------------
 

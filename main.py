@@ -9,7 +9,7 @@ from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
 from src.agent import KlatAgent
 from src.extensions import (
-    load_extensions, export_extension, import_extension,
+    load_extensions, export_extension, import_extension, import_extension_directory,
     list_extensions, enable_extension, disable_extension, remove_extension,
     create_extension, DYNAMIC_COMMANDS
 )
@@ -85,7 +85,7 @@ def _cmd_reasoning(args: str) -> None:
 
 
 def _cmd_extension(args: str, agent: KlatAgent) -> None:
-    """Handle /extension subcommands: list, export, import, enable, disable, remove, create"""
+    """Handle /extension subcommands: list, export, import, enable, disable, remove, create, dev"""
     parts = args.strip().split(None, 1)
     if not parts:
         print(f"\n  {GREEN}Klat Extension Management{RESET}")
@@ -94,6 +94,7 @@ def _cmd_extension(args: str, agent: KlatAgent) -> None:
         print("  /extension create <folder>      generate boilerplate extension folder")
         print("  /extension export <folder>      export folder into a .ke file")
         print("  /extension import <file.ke>     import and hot-load a .ke file")
+        print("  /extension dev <folder>         import and hot-load a directory directly")
         print("  /extension enable <name>        enable an extension")
         print("  /extension disable <name>       disable an extension")
         print("  /extension remove <name>        remove an extension completely")
@@ -155,6 +156,21 @@ def _cmd_extension(args: str, agent: KlatAgent) -> None:
             agent_print(f"Extension '{GREEN}{ext_name}{RESET}' is now active! (Total active: {active_count})")
         except Exception as e:
             agent_error(f"Failed to import extension: {e}")
+
+    elif subcmd == "dev":
+        if not remainder:
+            agent_error("Usage: /extension dev <folder-path>")
+            return
+        try:
+            ext_name = import_extension_directory(remainder)
+            agent_print(f"Extension '{GREEN}{ext_name}{RESET}' successfully imported in dev mode!")
+            active_count = load_extensions(silent=True)
+            from src.agent import rebuild_system_prompt
+            rebuild_system_prompt()
+            agent.refresh_system_prompt()
+            agent_print(f"Extension '{GREEN}{ext_name}{RESET}' is now active! (Total active: {active_count})")
+        except Exception as e:
+            agent_error(f"Failed to import extension in dev mode: {e}")
 
     elif subcmd in ("enable", "disable", "remove"):
         if not remainder:
@@ -432,6 +448,7 @@ def _cmd_help() -> None:
   /extension create <d>  generate a boilerplate extension folder
   /extension export <d>  export a folder into a .ke file
   /extension import <f>  import and hot-load a .ke extension file
+  /extension dev <f>     import and hot-load an extension directory directly
   /extension enable <n>  enable a disabled extension
   /extension disable <n> disable an active extension
   /extension remove <n>  uninstall/delete an extension
@@ -648,13 +665,9 @@ def main() -> None:
             _agent_busy = False
 
         except KeyboardInterrupt:
-            was_busy = _agent_busy
             _agent_busy = False
             print()
-            if was_busy:
-                agent_error("Stopped.")
-            else:
-                sys.exit(0)
+            agent_error("Stopped.")
         except Exception as e:
             _agent_busy = False
             agent_error(str(e))

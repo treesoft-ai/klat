@@ -126,6 +126,7 @@ if HAS_PROMPT_TOOLKIT:
                 "/extension create",
                 "/extension export",
                 "/extension import",
+                "/extension dev",
                 "/extension enable",
                 "/extension disable",
                 "/extension remove",
