@@ -632,6 +632,27 @@ TOOL_DECLARATIONS = [
             },
             "required": []
         }
+    },
+    {
+        "name": "done",
+        "description": (
+            "Signal that you have completed the task. Call this when you are fully finished "
+            "and have no more actions to take. Optionally pass a summary of what was accomplished."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Optional summary of what was completed.",
+                },
+                "task_complete": {
+                    "type": "boolean",
+                    "description": "Set to true to confirm task completion.",
+                },
+            },
+            "required": [],
+        },
     }
 ]
 
@@ -1381,6 +1402,88 @@ def _fetch_ai_models(
 
 
 # ---------------------------------------------------------------------------
+# Live bench telemetry
+# ---------------------------------------------------------------------------
+
+def _update_bench_telemetry(tool_name: str, args: dict, result: str) -> None:
+    """Append this tool call to the running bench telemetry log. No-op outside bench sessions."""
+    try:
+        from src import sessions
+        session_id = sessions.get_active_session_id()
+        if not (session_id and session_id.startswith("bench_")):
+            return
+
+        task_id = session_id[len("bench_"):]
+        bench_dir = Path.home() / ".klat" / "bench"
+        try:
+            with open(bench_dir / "config.json", "r", encoding="utf-8") as _f:
+                active_version = json.load(_f).get("active_version")
+        except Exception:
+            return
+        if not active_version:
+            return
+
+        log_path = bench_dir / active_version / "results" / task_id / "telemetry.json"
+        if not log_path.exists():
+            return
+
+        try:
+            with open(log_path, "r", encoding="utf-8") as _f:
+                log_data = json.load(_f)
+        except Exception:
+            return
+
+        # Append tool call record
+        log_data.setdefault("tool_calls", []).append({
+            "name": tool_name,
+            "args": args,
+            "result": result,
+        })
+
+        # Update files_read / files_modified incrementally
+        files_read: set[str] = set(log_data.get("files_read") or [])
+        files_modified: set[str] = set(log_data.get("files_modified") or [])
+
+        def _rel(raw: str) -> str:
+            try:
+                p = Path(raw).expanduser()
+                if p.is_absolute():
+                    return str(p.relative_to(WORK_DIR))
+                return str(p)
+            except Exception:
+                return raw
+
+        if tool_name in ("read_file", "read_file_slice"):
+            path_arg = args.get("path")
+            if isinstance(path_arg, list):
+                for pp in path_arg:
+                    files_read.add(_rel(str(pp)))
+            elif path_arg:
+                files_read.add(_rel(str(path_arg)))
+        elif tool_name in (
+            "write_file", "patch_file", "replace_in_file",
+            "insert_lines", "delete_file", "create_dir", "delete_dir",
+        ):
+            if "path" in args:
+                files_modified.add(_rel(str(args["path"])))
+        elif tool_name == "move_file":
+            for _key in ("source", "destination"):
+                if _key in args:
+                    files_modified.add(_rel(str(args[_key])))
+        elif tool_name == "copy_file":
+            if "destination" in args:
+                files_modified.add(_rel(str(args["destination"])))
+
+        log_data["files_read"] = sorted(files_read)
+        log_data["files_modified"] = sorted(files_modified)
+
+        with open(log_path, "w", encoding="utf-8") as _f:
+            json.dump(log_data, _f, indent=2)
+    except Exception:
+        pass  # Telemetry must never crash the agent
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -1397,6 +1500,13 @@ _TOOL_UNAVAILABLE_MSG = (
 
 
 def dispatch(name: str, args: dict) -> str:
+    """Public entry point — runs the tool then updates live bench telemetry."""
+    result = _dispatch_inner(name, args)
+    _update_bench_telemetry(name, args, result)
+    return result
+
+
+def _dispatch_inner(name: str, args: dict) -> str:
     try:
         # Allowlist gate — must run before any tool logic
         if not _is_tool_allowed(name):
@@ -1502,6 +1612,9 @@ def dispatch(name: str, args: dict) -> str:
                 include_latest=bool(args.get("include_latest", False)),
             )
 
+        if name == "done":
+            summary = args.get("summary", "")
+            return f"Task complete.{(' ' + summary) if summary else ''}"
         # Check dynamic tools
         from src.extensions import DYNAMIC_TOOLS
         if name in DYNAMIC_TOOLS:

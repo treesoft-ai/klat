@@ -15,21 +15,19 @@ def handle_bench(args_str: str, agent: Any = None) -> Any:
     Control Klat Benchmarking operations:
     - /bench create [name] [num]
     - /bench select [name] [num]
-    - /bench start [task_id]
-    - /bench submit
+    - /bench start [task_id]   (omit task_id to run all tasks in order)
     """
     parts = args_str.strip().split(None, 1)
     if not parts:
         klat.ui.print_accent("Klat Bench Command Interface")
         print("  /bench create [name] [num]       Initialize a new benchmark version structure")
         print("  /bench select [name] [num]       Switch the active benchmark workspace")
-        print("  /bench start [task_id]           Load a task and start execution")
-        print("  /bench submit                    Submit completed task for evaluation")
+        print("  /bench start [task_id]           Run a task (omit task_id to run all in order)")
         return None
-        
+
     subcmd = parts[0].lower()
     remainder = parts[1].strip() if len(parts) > 1 else ""
-    
+
     if subcmd == "create":
         _bench_create(remainder)
         return None
@@ -38,9 +36,6 @@ def handle_bench(args_str: str, agent: Any = None) -> Any:
         return None
     elif subcmd == "start":
         return _bench_start(remainder, agent)
-    elif subcmd == "submit":
-        _bench_submit(agent)
-        return None
     else:
         klat.log(f"Unknown bench subcommand: {subcmd}")
         klat.ui.print_dim("Type /bench for help.")
@@ -224,18 +219,52 @@ def _bench_start(task_id: str, agent: Any) -> Any:
     # 3. Reset/Clear active Klat session and start a new session named bench_<task_id>
     sessions.clear_transcript()
     sessions.set_active_session_id(f"bench_{task_id}")
-    
+
     # Re-initialize the agent
     project, location = ensure_env()
     new_agent = KlatAgent(project, location)
     new_agent.reset()
-    
+
     klat.ui.print_accent(f"Session reset. Session ID: bench_{task_id}")
     klat.ui.print_accent(f"Injecting organic prompt: {organic_prompt}")
-    
-    # Trigger first chat turn on the new agent
+
+    # 4. Initialize the live telemetry log before the first tool call
+    from src.config import current_provider, current_model, current_reasoning
+    from src.providers import get_provider as _get_provider
+    _prov = current_provider()
+    _model = current_model()
+    _reason = current_reasoning()
+    _backend = "gemini" if _get_provider(_prov).get("backend") == "gemini" else "openai-compat"
+
+    task_results_dir = bench_dir / active_version / "results" / task_id
+    task_results_dir.mkdir(parents=True, exist_ok=True)
+
+    _init_log: dict = {
+        "session_id": f"bench_{task_id}",
+        "task_id": task_id,
+        "provider": _prov,
+        "model": _model,
+        "reasoning": _reason,
+        "backend": _backend,
+        "tool_calls": [],
+        "files_read": [],
+        "files_modified": [],
+        "file_changes": {},
+        "transcript": None,
+        "history": None,
+    }
+    try:
+        with open(task_results_dir / "telemetry.json", "w", encoding="utf-8") as _lf:
+            json.dump(_init_log, _lf, indent=2)
+    except Exception as _e:
+        klat.log(f"Warning: Failed to initialize telemetry log: {_e}")
+
+    # 5. Run the task
     new_agent.chat(organic_prompt)
-    
+
+    # 6. Finalize telemetry now that the agent has finished
+    _bench_finalize(new_agent, task_id, task_results_dir, backup_dir)
+
     return new_agent
 
 
@@ -298,10 +327,7 @@ def _bench_start_all(agent: Any) -> Any:
         klat.ui.print_accent(sep)
 
         last_agent = _bench_start(tid, last_agent)
-
-        # Auto-submit after the task completes
-        klat.ui.print_accent(f"Task '{tid}' finished. Auto-submitting...")
-        _bench_submit(last_agent)
+        # (finalization + cleanup happens inside _bench_start via _bench_finalize)
 
         # Reset workspace to HEAD before the next task
         if idx < total:
@@ -325,127 +351,46 @@ def _bench_start_all(agent: Any) -> Any:
     return last_agent
 
 
-def _bench_submit(agent: Any) -> None:
+def _bench_finalize(agent: Any, task_id: str, task_results_dir: Path, backup_dir: Path) -> None:
+    """Finalize bench telemetry after the agent completes a task.
+
+    - Replays file operations from tool_calls to produce simulated before/after content.
+    - Writes physical before/ and after/ directory trees.
+    - Appends transcript and history to the telemetry JSON.
+    - Cleans up active blacklist/allowlist files.
+    """
     from src import sessions
     from src.agent import KlatAgent
-    
-    session_id = sessions.get_active_session_id()
-    
-    bench_dir = Path.home() / ".klat" / "bench"
-    config_file = bench_dir / "config.json"
-    active_version = None
-    if config_file.exists():
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-                active_version = cfg.get("active_version")
-        except Exception:
-            pass
-            
-    if not active_version:
-        klat.log("Error: No active benchmark version configured. Run /bench version [name] [number] first.")
+
+    log_path = task_results_dir / "telemetry.json"
+    if not log_path.exists():
+        klat.log("Warning: Telemetry log not found; nothing to finalize.")
         return
-        
-    results_dir = bench_dir / active_version / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    
+
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+    except Exception as e:
+        klat.log(f"Error reading telemetry log for finalization: {e}")
+        return
+
+    # --- Resolve history from agent ---
     active_agent = agent if agent else KlatAgent.active_instance
-    if not active_agent:
-        # Load from disk
-        session_data = sessions.load_session(session_id)
-        if not session_data:
-            klat.log("Error: Active session data could not be found.")
-            return
-        history = session_data.get("history", [])
-        backend = session_data.get("backend", "openai-compat")
-        provider = session_data.get("provider", "openai")
-        model = session_data.get("model", "")
-        reasoning = session_data.get("reasoning", "none")
-    else:
-        from src.config import current_provider, current_model, current_reasoning
-        from src.providers import get_provider
-        provider = current_provider()
-        model = current_model()
-        reasoning = current_reasoning()
-        p = get_provider(provider)
-        backend = "gemini" if p["backend"] == "gemini" else "openai-compat"
-        history = active_agent._gemini_history if backend == "gemini" else active_agent._openai_messages
-        
-    # Helper to get field from part (supporting both object attribute and dict key)
-    def get_field(obj, name):
-        if isinstance(obj, dict):
-            return obj.get(name)
-        return getattr(obj, name, None)
-        
-    # Extract ALL tool calls along with their results from history
-    exported_tool_calls = []
-    if backend == "gemini":
-        pending_calls = []
-        for content in history:
-            role = get_field(content, "role")
-            parts = get_field(content, "parts") or []
-            if role == "model":
-                for part in parts:
-                    fcall = get_field(part, "function_call") or get_field(part, "functionCall")
-                    if fcall:
-                        name = get_field(fcall, "name")
-                        args = get_field(fcall, "args") or {}
-                        if hasattr(args, "model_dump"):
-                            args = args.model_dump()
-                        elif not isinstance(args, dict):
-                            args = dict(args) if args else {}
-                        call_info = {"name": name, "args": args, "result": None}
-                        exported_tool_calls.append(call_info)
-                        pending_calls.append(call_info)
-            elif role == "user":
-                for part in parts:
-                    fresp = get_field(part, "function_response") or get_field(part, "functionResponse")
-                    if fresp:
-                        name = get_field(fresp, "name")
-                        resp = get_field(fresp, "response") or {}
-                        result = get_field(resp, "result") if isinstance(resp, dict) else getattr(resp, "result", None)
-                        for call in pending_calls:
-                            if call["name"] == name and call["result"] is None:
-                                call["result"] = result
-                                pending_calls.remove(call)
-                                break
-    else:
-        # openai-compat
-        calls_by_id = {}
-        for msg in history:
-            role = get_field(msg, "role")
-            if role == "assistant":
-                tcalls = get_field(msg, "tool_calls") or []
-                for tc in tcalls:
-                    tc_id = get_field(tc, "id")
-                    func = get_field(tc, "function") or {}
-                    name = get_field(func, "name")
-                    args_raw = get_field(func, "arguments") or "{}"
-                    if isinstance(args_raw, str):
-                        try:
-                            args = json.loads(args_raw)
-                        except Exception:
-                            args = {}
-                    elif isinstance(args_raw, dict):
-                        args = args_raw
-                    else:
-                        args = {}
-                    call_info = {"name": name, "args": args, "result": None}
-                    exported_tool_calls.append(call_info)
-                    if tc_id:
-                        calls_by_id[tc_id] = call_info
-            elif role == "tool":
-                tc_id = get_field(msg, "tool_call_id")
-                content = get_field(msg, "content")
-                if tc_id and tc_id in calls_by_id:
-                    calls_by_id[tc_id]["result"] = content
-                    
-    files_read = set()
-    files_modified = set()
-    simulated_files = {}
-    backup_dir = Path.home() / ".klat" / "bench" / "active_backup"
-    
-    def resolve_rel(path_str):
+    history: list = []
+    backend = log_data.get("backend", "openai-compat")
+    if active_agent:
+        history = (
+            active_agent._gemini_history
+            if backend == "gemini"
+            else active_agent._openai_messages
+        )
+
+    # --- Simulate file changes to produce before/after ---
+    exported_tool_calls = log_data.get("tool_calls", [])
+    simulated_files: dict[str, str | None] = {}
+    files_modified: set[str] = set(log_data.get("files_modified") or [])
+
+    def _resolve_rel(path_str: str) -> Path:
         p = Path(path_str).expanduser()
         if p.is_absolute():
             try:
@@ -453,200 +398,120 @@ def _bench_submit(agent: Any) -> None:
             except ValueError:
                 return Path(p.name)
         return p
-        
+
+    def _bk_read(rel: Path) -> str:
+        bk = backup_dir / rel
+        return bk.read_text(encoding="utf-8") if bk.exists() else ""
+
     for tc in exported_tool_calls:
-        name = tc["name"]
-        args = tc["args"]
-        
-        if name == "read_file":
-            path_arg = args.get("path")
-            if isinstance(path_arg, list):
-                for p in path_arg:
-                    files_read.add(str(resolve_rel(p)))
-            elif path_arg:
-                files_read.add(str(resolve_rel(path_arg)))
-                
-        elif name == "write_file":
+        name = tc.get("name", "")
+        args = tc.get("args") or {}
+
+        if name == "write_file":
             path_arg = args.get("path")
             if path_arg:
-                rel = resolve_rel(path_arg)
+                rel = _resolve_rel(path_arg)
                 files_modified.add(str(rel))
                 simulated_files[str(rel)] = args.get("content", "")
-                
+
         elif name == "patch_file":
             path_arg = args.get("path")
             if path_arg:
-                rel = resolve_rel(path_arg)
+                rel = _resolve_rel(path_arg)
                 files_modified.add(str(rel))
                 if str(rel) not in simulated_files:
-                    backup_file = backup_dir / rel
-                    if backup_file.exists():
-                        simulated_files[str(rel)] = backup_file.read_text(encoding="utf-8")
-                    else:
-                        simulated_files[str(rel)] = ""
-                content = simulated_files[str(rel)]
-                lines = content.splitlines(keepends=True)
-                start_line = int(args.get("start_line", 1))
-                end_line = int(args.get("end_line", start_line))
-                new_content = args.get("new_content", "")
-                
-                lo = max(0, start_line - 1)
-                hi = min(len(lines), end_line)
-                
-                replacement = new_content
-                if lines and lines[0].endswith("\n") and not replacement.endswith("\n"):
-                    replacement += "\n"
-                lines[lo:hi] = replacement.splitlines(keepends=True)
+                    simulated_files[str(rel)] = _bk_read(rel)
+                lines = simulated_files[str(rel)].splitlines(keepends=True)
+                s = max(0, int(args.get("start_line", 1)) - 1)
+                e = min(len(lines), int(args.get("end_line", s + 1)))
+                nc = args.get("new_content", "")
+                if lines and lines[0].endswith("\n") and not nc.endswith("\n"):
+                    nc += "\n"
+                lines[s:e] = nc.splitlines(keepends=True)
                 simulated_files[str(rel)] = "".join(lines)
-                
+
         elif name == "insert_lines":
             path_arg = args.get("path")
             if path_arg:
-                rel = resolve_rel(path_arg)
+                rel = _resolve_rel(path_arg)
                 files_modified.add(str(rel))
                 if str(rel) not in simulated_files:
-                    backup_file = backup_dir / rel
-                    if backup_file.exists():
-                        simulated_files[str(rel)] = backup_file.read_text(encoding="utf-8")
-                    else:
-                        simulated_files[str(rel)] = ""
-                content = simulated_files[str(rel)]
-                lines = content.splitlines(keepends=True)
-                after_line = int(args.get("after_line", 0))
-                new_content = args.get("content", "")
-                
-                if not new_content.endswith("\n"):
-                    new_content += "\n"
-                idx = max(0, min(len(lines), after_line))
-                lines.insert(idx, new_content)
+                    simulated_files[str(rel)] = _bk_read(rel)
+                lines = simulated_files[str(rel)].splitlines(keepends=True)
+                nc = args.get("content", "")
+                if not nc.endswith("\n"):
+                    nc += "\n"
+                idx = max(0, min(len(lines), int(args.get("after_line", 0))))
+                lines.insert(idx, nc)
                 simulated_files[str(rel)] = "".join(lines)
-                
+
         elif name == "replace_in_file":
             path_arg = args.get("path")
             if path_arg:
-                rel = resolve_rel(path_arg)
+                rel = _resolve_rel(path_arg)
                 files_modified.add(str(rel))
                 if str(rel) not in simulated_files:
-                    backup_file = backup_dir / rel
-                    if backup_file.exists():
-                        simulated_files[str(rel)] = backup_file.read_text(encoding="utf-8")
-                    else:
-                        simulated_files[str(rel)] = ""
+                    simulated_files[str(rel)] = _bk_read(rel)
+                old_t = args.get("old_text", "")
+                new_t = args.get("new_text", "")
+                cnt = int(args.get("count", 1))
                 content = simulated_files[str(rel)]
-                old_text = args.get("old_text", "")
-                new_text = args.get("new_text", "")
-                count = int(args.get("count", 1))
-                if count == -1:
-                    simulated_files[str(rel)] = content.replace(old_text, new_text)
-                else:
-                    simulated_files[str(rel)] = content.replace(old_text, new_text, count)
-                    
+                simulated_files[str(rel)] = (
+                    content.replace(old_t, new_t) if cnt == -1
+                    else content.replace(old_t, new_t, cnt)
+                )
+
         elif name == "delete_file":
             path_arg = args.get("path")
             if path_arg:
-                rel = resolve_rel(path_arg)
+                rel = _resolve_rel(path_arg)
                 files_modified.add(str(rel))
-                if str(rel) in simulated_files:
-                    del simulated_files[str(rel)]
-                else:
-                    simulated_files[str(rel)] = None
-                    
+                simulated_files[str(rel)] = None
+
         elif name == "move_file":
-            src_arg = args.get("source")
-            dst_arg = args.get("destination")
+            src_arg, dst_arg = args.get("source"), args.get("destination")
             if src_arg and dst_arg:
-                src_rel = resolve_rel(src_arg)
-                dst_rel = resolve_rel(dst_arg)
-                files_modified.add(str(src_rel))
-                files_modified.add(str(dst_rel))
-                
-                if str(src_rel) in simulated_files:
-                    src_content = simulated_files[str(src_rel)]
-                else:
-                    backup_file = backup_dir / src_rel
-                    if backup_file.exists():
-                        src_content = backup_file.read_text(encoding="utf-8")
-                    else:
-                        src_content = ""
+                src_rel, dst_rel = _resolve_rel(src_arg), _resolve_rel(dst_arg)
+                files_modified.update([str(src_rel), str(dst_rel)])
+                src_content = simulated_files.get(str(src_rel), _bk_read(src_rel))
                 simulated_files[str(dst_rel)] = src_content
                 simulated_files[str(src_rel)] = None
-                
+
         elif name == "copy_file":
-            src_arg = args.get("source")
-            dst_arg = args.get("destination")
+            src_arg, dst_arg = args.get("source"), args.get("destination")
             if src_arg and dst_arg:
-                src_rel = resolve_rel(src_arg)
-                dst_rel = resolve_rel(dst_arg)
+                src_rel, dst_rel = _resolve_rel(src_arg), _resolve_rel(dst_arg)
                 files_modified.add(str(dst_rel))
-                
-                if str(src_rel) in simulated_files:
-                    src_content = simulated_files[str(src_rel)]
-                else:
-                    backup_file = backup_dir / src_rel
-                    if backup_file.exists():
-                        src_content = backup_file.read_text(encoding="utf-8")
-                    else:
-                        src_content = ""
-                simulated_files[str(dst_rel)] = src_content
- 
-    klat.ui.print_accent("Auditing active session telemetry...")
-    klat.ui.print_dim(f"  Session ID: {session_id}")
-    klat.ui.print_dim(f"  Backend: {backend}")
-    klat.ui.print_dim(f"  Model: {model}")
-    klat.ui.print_dim(f"  Files Read: {len(files_read)}")
-    klat.ui.print_dim(f"  Files Modified: {len(files_modified)}")
-    
-    # Export before/after versions of every modified file
-    before_dir = results_dir / "before"
-    after_dir = results_dir / "after"
-    
-    if before_dir.exists():
-        shutil.rmtree(before_dir)
-    if after_dir.exists():
-        shutil.rmtree(after_dir)
-        
-    before_dir.mkdir(parents=True, exist_ok=True)
-    after_dir.mkdir(parents=True, exist_ok=True)
-    
-    file_changes = {}
-    klat.ui.print_accent(f"Writing verified file modifications (before/after) to results directory: {results_dir}")
-    
+                simulated_files[str(dst_rel)] = simulated_files.get(
+                    str(src_rel), _bk_read(src_rel)
+                )
+
+    # --- Write before/after physical files ---
+    before_dir = task_results_dir / "before"
+    after_dir = task_results_dir / "after"
+    for _d in (before_dir, after_dir):
+        if _d.exists():
+            shutil.rmtree(_d)
+        _d.mkdir(parents=True, exist_ok=True)
+
+    file_changes: dict[str, dict] = {}
     for rel_str in sorted(files_modified):
-        backup_file = backup_dir / rel_str
-        
-        # Determine "before" content
-        if backup_file.exists() and backup_file.is_file():
-            try:
-                before_content = backup_file.read_text(encoding="utf-8")
-            except Exception:
-                before_content = ""
-        else:
-            before_content = None
-            
-        # Determine "after" content
+        bk = backup_dir / rel_str
+        before_content = bk.read_text(encoding="utf-8") if (bk.exists() and bk.is_file()) else None
         after_content = simulated_files.get(rel_str)
-        
-        file_changes[rel_str] = {
-            "before": before_content,
-            "after": after_content
-        }
-        
-        before_state = "exists" if before_content is not None else "new"
-        after_state = "exists" if after_content is not None else "deleted"
-        klat.ui.print_dim(f"  Modified file: {rel_str} (before: {before_state}, after: {after_state})")
-        
-        # Write physical copies
+        file_changes[rel_str] = {"before": before_content, "after": after_content}
+
         if before_content is not None:
-            before_dest = before_dir / rel_str
-            before_dest.parent.mkdir(parents=True, exist_ok=True)
-            before_dest.write_text(before_content, encoding="utf-8")
-            
+            bd = before_dir / rel_str
+            bd.parent.mkdir(parents=True, exist_ok=True)
+            bd.write_text(before_content, encoding="utf-8")
         if after_content is not None:
-            after_dest = after_dir / rel_str
-            after_dest.parent.mkdir(parents=True, exist_ok=True)
-            after_dest.write_text(after_content, encoding="utf-8")
-            
-    serializable_history = []
+            ad = after_dir / rel_str
+            ad.parent.mkdir(parents=True, exist_ok=True)
+            ad.write_text(after_content, encoding="utf-8")
+
+    # --- Serialize history ---
+    serializable_history: list = []
     for item in history:
         if hasattr(item, "model_dump"):
             try:
@@ -655,38 +520,30 @@ def _bench_submit(agent: Any) -> None:
                 serializable_history.append(str(item))
         else:
             serializable_history.append(item)
-            
-    log_data = {
-        "session_id": session_id,
-        "provider": provider,
-        "model": model,
-        "reasoning": reasoning,
-        "backend": backend,
-        "files_read": list(files_read),
-        "files_modified": list(files_modified),
-        "tool_calls": exported_tool_calls,
-        "file_changes": file_changes,
-        "transcript": sessions.get_transcript(),
-        "history": serializable_history
-    }
-    
-    log_path = results_dir / "telemetry_log.json"
+
+    # --- Write final telemetry ---
+    log_data["files_modified"] = sorted(files_modified)
+    log_data["file_changes"] = file_changes
+    log_data["transcript"] = sessions.get_transcript()
+    log_data["history"] = serializable_history
+
     try:
-        with open(log_path, "w", encoding="utf-8") as lf:
-            json.dump(log_data, lf, indent=2)
-        klat.ui.print_accent(f"Evaluation telemetry log written to: {log_path}")
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, indent=2)
+        klat.ui.print_accent(f"Telemetry finalized: {log_path}")
     except Exception as e:
-        klat.log(f"Error writing telemetry log: {e}")
-        
-    # Clean up active blacklist and allowlist files if they exist
-    for _cleanup_file in (
+        klat.log(f"Error writing final telemetry: {e}")
+
+    # --- Clean up sandbox control files ---
+    for _cleanup in (
         Path.home() / ".klat" / "bench" / "active_blacklist.json",
         Path.home() / ".klat" / "bench" / "active_allowlist.json",
     ):
-        if _cleanup_file.exists():
+        if _cleanup.exists():
             try:
-                _cleanup_file.unlink()
+                _cleanup.unlink()
             except Exception:
                 pass
-            
-    klat.ui.print_accent("Benchmark submission completed successfully!")
+
+    klat.ui.print_accent(f"Benchmark task '{task_id}' completed.")
+
