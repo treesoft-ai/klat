@@ -16,6 +16,7 @@ def handle_bench(args_str: str, agent: Any = None) -> Any:
     - /bench create [name] [num]
     - /bench select [name] [num]
     - /bench start [task_id]   (omit task_id to run all tasks in order)
+    - /bench clean             Clean the results of the active benchmark, keeping tasks
     """
     parts = args_str.strip().split(None, 1)
     if not parts:
@@ -23,6 +24,7 @@ def handle_bench(args_str: str, agent: Any = None) -> Any:
         print("  /bench create [name] [num]       Initialize a new benchmark version structure")
         print("  /bench select [name] [num]       Switch the active benchmark workspace")
         print("  /bench start [task_id]           Run a task (omit task_id to run all in order)")
+        print("  /bench clean                     Clean the results of the active benchmark, keeping tasks")
         return None
 
     subcmd = parts[0].lower()
@@ -36,6 +38,9 @@ def handle_bench(args_str: str, agent: Any = None) -> Any:
         return None
     elif subcmd == "start":
         return _bench_start(remainder, agent)
+    elif subcmd == "clean":
+        _bench_clean()
+        return None
     else:
         klat.log(f"Unknown bench subcommand: {subcmd}")
         klat.ui.print_dim("Type /bench for help.")
@@ -107,6 +112,36 @@ def _bench_select(remainder: str) -> None:
             klat.ui.print_dim(f"Warning: Workspace directory {version_dir} does not exist yet. Run '/bench create {name} {num}' to initialize it.")
     except Exception as e:
         klat.log(f"Failed to switch benchmark version: {e}")
+
+def _bench_clean() -> None:
+    bench_dir = Path.home() / ".klat" / "bench"
+    config_file = bench_dir / "config.json"
+    active_version = None
+
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                active_version = cfg.get("active_version")
+        except Exception:
+            pass
+
+    if not active_version:
+        klat.ui.print_accent("Error: No active benchmark version configured. Run /bench select [name] [number] first.")
+        return
+
+    version_dir = bench_dir / active_version
+    results_dir = version_dir / "results"
+    if not results_dir.exists():
+        klat.ui.print_accent(f"Results directory for {active_version} does not exist: {results_dir}")
+        return
+
+    try:
+        shutil.rmtree(results_dir)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        klat.ui.print_accent(f"Successfully cleaned results for active benchmark: {active_version}")
+    except Exception as e:
+        klat.log(f"Failed to clean results: {e}")
 
 def _bench_start(task_id: str, agent: Any) -> Any:
     from src.agent import KlatAgent
@@ -217,6 +252,7 @@ def _bench_start(task_id: str, agent: Any) -> Any:
                 pass
 
     # 3. Reset/Clear active Klat session and start a new session named bench_<task_id>
+    sessions.delete_session(f"bench_{task_id}")
     sessions.clear_transcript()
     sessions.set_active_session_id(f"bench_{task_id}")
 
@@ -265,6 +301,31 @@ def _bench_start(task_id: str, agent: Any) -> Any:
     finally:
         # 6. Finalize telemetry now that the agent has finished
         _bench_finalize(new_agent, task_id, task_results_dir, backup_dir)
+
+        # 7. Git revert all changes and wait 2 seconds
+        klat.ui.print_accent("Resetting workspace to HEAD and cleaning untracked files...")
+        import subprocess
+        import time
+        try:
+            subprocess.run(
+                ["git", "reset", "--hard", "HEAD"],
+                cwd=str(Path.cwd()),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "clean", "-fd"],
+                cwd=str(Path.cwd()),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except Exception as e:
+            klat.log(f"Warning: git reset/clean failed: {e}")
+
+        klat.ui.print_accent("Waiting 2 seconds before continuing...")
+        time.sleep(2)
 
     return new_agent
 
@@ -328,25 +389,7 @@ def _bench_start_all(agent: Any) -> Any:
         klat.ui.print_accent(sep)
 
         last_agent = _bench_start(tid, last_agent)
-        # (finalization + cleanup happens inside _bench_start via _bench_finalize)
-
-        # Reset workspace to HEAD before the next task
-        if idx < total:
-            klat.ui.print_accent("Resetting workspace to HEAD for the next task...")
-            try:
-                result = subprocess.run(
-                    ["git", "reset", "--hard", "HEAD"],
-                    cwd=str(Path.cwd()),
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if result.returncode == 0:
-                    klat.ui.print_dim(f"  git reset: {result.stdout.strip()}")
-                else:
-                    klat.log(f"Warning: git reset returned exit code {result.returncode}: {result.stderr.strip()}")
-            except Exception as e:
-                klat.log(f"Warning: git reset failed: {e}")
+        # (finalization + cleanup + 2s sleep happens inside _bench_start)
 
     klat.ui.print_accent("All benchmark tasks completed!")
     return last_agent
@@ -555,9 +598,10 @@ def suggest_bench(remainder: str, document: Any = None) -> str | None:
     - /bench create [name] [num]
     - /bench select [name] [num]
     - /bench start [task_id]
+    - /bench clean
     """
     if " " not in remainder:
-        for sc in ["create", "select", "start"]:
+        for sc in ["create", "select", "start", "clean"]:
             if sc.startswith(remainder) and sc != remainder:
                 return sc[len(remainder):]
         return None

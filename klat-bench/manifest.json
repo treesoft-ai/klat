@@ -5,7 +5,7 @@
   "commands": [
     {
       "name": "bench",
-      "description": "Control Klat Benchmarking operations (/bench create, /bench select, /bench start, /bench submit)",
+      "description": "Control Klat Benchmarking operations (/bench create, /bench select, /bench start, /bench clean, /bench submit)",
       "entrypoint": "handle_bench",
       "autocomplete": "suggest_bench"
     }
