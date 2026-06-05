@@ -972,6 +972,57 @@ def resolve_mentions(message: str) -> str:
     return re.sub(pattern, replace_match, message)
 
 
+def get_file_context_str(message: str) -> str:
+    """Scan the message for @filename, resolve it, read the file contents, and return formatted context blocks."""
+    import re
+    from pathlib import Path
+    from src.tools import WORK_DIR
+    from src import ui
+    
+    pattern = r'@([a-zA-Z0-9_\-\.\/\\]+)'
+    mentioned_files = []
+    
+    for match in re.finditer(pattern, message):
+        raw_path = match.group(1)
+        # Handle trailing punctuation
+        punctuation = ""
+        while raw_path and raw_path[-1] in ".,;:?!):]":
+            punctuation = raw_path[-1] + punctuation
+            raw_path = raw_path[:-1]
+            
+        clean_path_str = raw_path.replace('\\', '/')
+        try:
+            p = Path(WORK_DIR) / clean_path_str
+            if not p.exists():
+                p = Path(clean_path_str)
+            if p.exists() and p.is_file():
+                abs_path = p.resolve()
+                if abs_path not in mentioned_files:
+                    mentioned_files.append(abs_path)
+        except Exception:
+            pass
+            
+    if not mentioned_files:
+        return ""
+        
+    context_blocks = []
+    for fp in mentioned_files:
+        try:
+            try:
+                display_path = fp.relative_to(Path(WORK_DIR).resolve()).as_posix()
+            except ValueError:
+                display_path = fp.as_posix()
+            
+            ui.agent_step("ingest", f"Preloading context from {display_path}")
+            
+            content = fp.read_text(encoding="utf-8", errors="replace")
+            context_blocks.append(f"=== File Context: {display_path} ===\n{content}\n")
+        except Exception as e:
+            context_blocks.append(f"=== File Context: {fp.name} ===\nError reading file: {e}\n")
+            
+    return "\n".join(context_blocks)
+
+
 class KlatAgent:
     active_instance: KlatAgent | None = None
 
@@ -1009,7 +1060,12 @@ class KlatAgent:
             notification = "[System Alert: The project architecture and overview have been analyzed and updated in KLAT.md at the user's request.]\n\n"
             self._update_run_notification = False
 
+        # Ingest file context from mentions first
+        context_str = get_file_context_str(message)
+
         resolved_message = notification + resolve_mentions(message)
+        if context_str:
+            resolved_message += "\n\n" + context_str
 
         try:
             if provider["backend"] == "gemini":
