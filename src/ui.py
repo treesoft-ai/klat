@@ -518,43 +518,90 @@ def agent_thought(text: str) -> None:
         pass
 
 
-
 def agent_step(action: str, detail: str = "") -> None:
     """Print a single agent action step."""
     import time
     import sys
+    import shutil
 
-    action_len = len(action)
+    # The full visible line is: "  → " + action + "  " + detail
+    # We animate the entire thing from character 0 so the line types itself in
+    # from a dead start — indent, arrow, and all.
+    PREFIX = "  → "           # 4 visible chars
+    PREFIX_VISUAL = len(PREFIX)
+
+    # Clamp content to terminal width to prevent line-wrapping (which is what
+    # caused the "dozens of repetitions" bug: \r only rewinds to col 0 of the
+    # *current* visual line, so any wrap makes subsequent frames print on new lines).
+    try:
+        cols = shutil.get_terminal_size(fallback=(80, 24)).columns
+    except Exception:
+        cols = 80
+    max_content = max(cols - PREFIX_VISUAL - 1, 10)
+
     detail_part = f"  {detail}" if detail else ""
-    full_len = action_len + len(detail_part)
-    
-    prefix = f"  {GREEN}→{RESET} "
+    raw_content = action + detail_part
+    if len(raw_content) > max_content:
+        raw_content = raw_content[:max_content - 1] + "…"
+
+    action_clamped = raw_content[:len(action)] if len(raw_content) >= len(action) else raw_content
+    detail_clamped = raw_content[len(action_clamped):]
+
+    # Full flat string animated character-by-character from column 0:
+    #   chars 0-3  : PREFIX ("  → ")
+    #   chars 4+   : action_clamped + detail_clamped
+    full_flat = PREFIX + action_clamped + detail_clamped
+    total = len(full_flat)
+
     delay = 0.04
-    
-    for step in range(1, full_len + 1):
-        if step <= action_len:
-            visible_act = action[:step]
-            if step < full_len:
-                grad_part = colorize_gradient(visible_act[:-1])
-                lead_char = visible_act[-1]
-                colored_text = f"{grad_part}\033[1;37m{lead_char}\033[0m"
-            else:
-                colored_text = colorize_gradient(visible_act)
+
+    for step in range(1, total + 1):
+        visible = full_flat[:step]
+
+        # Split visible portion into its three segments
+        pre_vis   = visible[:PREFIX_VISUAL]
+        after_pre = visible[PREFIX_VISUAL:]
+        act_vis   = after_pre[:len(action_clamped)]
+        det_vis   = after_pre[len(action_clamped):]
+
+        # Render prefix: spaces then green →, then space
+        if len(pre_vis) < 3:
+            colored_pre = pre_vis               # still in the leading spaces
+        elif len(pre_vis) == 3:
+            colored_pre = f"  {GREEN}→{RESET}"
         else:
-            act_part = colorize_gradient(action)
-            revealed_detail = detail_part[:step - action_len]
-            if step < full_len:
-                dim_part = f"{DIM}{revealed_detail[:-1]}{RESET}" if len(revealed_detail) > 1 else ""
-                lead_char = revealed_detail[-1]
-                colored_text = f"{act_part}{dim_part}\033[1;37m{lead_char}\033[0m"
+            colored_pre = f"  {GREEN}→{RESET} "
+
+        # Render action with green gradient; bright-white lead char while animating the action
+        if act_vis:
+            if len(act_vis) < len(action_clamped):
+                grad_done   = colorize_gradient(act_vis[:-1]) if len(act_vis) > 1 else ""
+                colored_act = grad_done + f"\033[1;37m{act_vis[-1]}\033[0m"
             else:
-                dim_part = f"{DIM}{revealed_detail}{RESET}"
-                colored_text = f"{act_part}{dim_part}"
-                
-        sys.stdout.write(f"\r{prefix}{colored_text}\033[K")
+                colored_act = colorize_gradient(act_vis)
+        else:
+            colored_act = ""
+
+        # Render detail dim; bright-white lead char while animating the detail
+        if det_vis:
+            if len(det_vis) < len(detail_clamped):
+                dim_done    = f"{DIM}{det_vis[:-1]}{RESET}" if len(det_vis) > 1 else ""
+                colored_det = dim_done + f"\033[1;37m{det_vis[-1]}\033[0m"
+            else:
+                colored_det = f"{DIM}{det_vis}{RESET}"
+        else:
+            colored_det = ""
+
+        # \033[2K erases the entire current line; \r returns to column 0.
+        output_line = f"\033[2K\r{colored_pre}{colored_act}{colored_det}"
+        try:
+            sys.stdout.write(output_line)
+        except UnicodeEncodeError:
+            encoding = sys.stdout.encoding or "utf-8"
+            sys.stdout.write(output_line.encode(encoding, errors="replace").decode(encoding))
         sys.stdout.flush()
         time.sleep(delay)
-        
+
     sys.stdout.write("\n")
     sys.stdout.flush()
 
@@ -563,6 +610,7 @@ def agent_step(action: str, detail: str = "") -> None:
         sessions.record_ui_event("step", action=action, detail=detail)
     except Exception:
         pass
+
 
 
 def agent_done() -> None:
