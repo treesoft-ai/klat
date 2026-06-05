@@ -542,10 +542,13 @@ def _cmd_help() -> None:
 """)
 
 
-def _cmd_onboard() -> None:
+def _cmd_onboard(agent: KlatAgent) -> None:
     """Handle /onboard — re-run the onboarding wizard (overwrites preferences)."""
     from src.onboarding import run_full_onboarding
     run_full_onboarding(force=True)
+    from src.agent import rebuild_system_prompt
+    rebuild_system_prompt()
+    agent.refresh_system_prompt()
 
 
 
@@ -698,7 +701,7 @@ def main() -> None:
                     elif cmd == "streaming":
                         _cmd_streaming(remainder)
                     elif cmd == "onboard":
-                        _cmd_onboard()
+                        _cmd_onboard(agent)
                     elif cmd == "extension":
                         _cmd_extension(remainder, agent)
                     elif cmd == "session":

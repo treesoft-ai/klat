@@ -118,8 +118,90 @@ def _build_system_prompt() -> str:
     extension_tools_section = f"\n(Extension tools)\n{dynamic_tools_text}" if dynamic_tools_text else "\n"
     extension_rules_section = f"\n{custom_rules_text}" if custom_rules_text else ""
 
+    # Load user onboarding preferences if available
+    try:
+        from src.onboarding import load_preferences
+        prefs = load_preferences()
+    except Exception:
+        prefs = {}
+
+    profile_text = ""
+    preference_rules = []
+
+    if prefs:
+        role = prefs.get("role", "")
+        experience = prefs.get("coding_experience", "")
+        ai_fam = prefs.get("ai_familiarity", "")
+        languages = prefs.get("languages", [])
+
+        # Build User Profile section
+        profile_parts = []
+        if role:
+            profile_parts.append(f"- Role: {role}")
+        if experience:
+            profile_parts.append(f"- Coding Experience: {experience}")
+        if ai_fam:
+            profile_parts.append(f"- AI Tooling Familiarity: {ai_fam}")
+        if languages:
+            profile_parts.append(f"- Primary Languages: {', '.join(languages)}")
+
+        if profile_parts:
+            profile_text = "## User Profile\n" + "\n".join(profile_parts) + "\n\n"
+
+        # Map preferences to instructions
+        # 1. Experience mapping
+        if experience:
+            exp_lower = experience.lower()
+            if "newcomer" in exp_lower or "beginner" in exp_lower:
+                preference_rules.append(
+                    "Explain programming concepts and syntax clearly. Comment your code blocks thoroughly and explain command/tool side effects before invoking them."
+                )
+            elif "advanced" in exp_lower or "expert" in exp_lower:
+                preference_rules.append(
+                    "Be highly concise. Skip basic explanations of syntax, git, or command usage. Assume expert-level technical fluency and output optimized, direct code."
+                )
+
+        # 2. AI familiarity mapping
+        if ai_fam:
+            ai_lower = ai_fam.lower()
+            if "curious" in ai_lower or "exploring" in ai_lower:
+                preference_rules.append(
+                    "Guide the user step-by-step. Provide helpful suggestions on how they can run or test the outputs."
+                )
+            elif "power user" in ai_lower:
+                preference_rules.append(
+                    "Minimize conversational filler. Focus strictly on execution, raw outputs, and advanced integrations."
+                )
+
+        # 3. Role mapping
+        if role:
+            role_lower = role.lower()
+            if "designer" in role_lower or "web" in role_lower:
+                preference_rules.append(
+                    "Prioritize UX/UI polish, clean CSS, responsive layouts, accessibility, and interactive design aesthetics."
+                )
+            elif "data" in role_lower or "ml" in role_lower or "machine learning" in role_lower:
+                preference_rules.append(
+                    "Prioritize data pipelines, performance, standard data libraries (e.g. pandas, numpy), and code reproducibility."
+                )
+            elif "founder" in role_lower or "indie" in role_lower or "hacker" in role_lower:
+                preference_rules.append(
+                    "Focus on speed, pragmatism, and simplicity. Build lightweight MVPs, prefer self-contained scripts, and avoid over-engineering."
+                )
+
+        # 4. Languages mapping
+        if languages:
+            preference_rules.append(
+                f"When generating scripts, test cases, or coding examples, prioritize the following languages: {', '.join(languages)}."
+            )
+
+    preference_rules_text = ""
+    if preference_rules:
+        preference_rules_text = "\n" + "\n".join(f"- {rule}" for rule in preference_rules)
+
     return (
         "You are Klat, a software engineering assistant running in the terminal.\n\n"
+        f"{profile_text}"
         "## Environment\n"
         f"Working directory: {WORK_DIR}\n\n"
         "## Tools\n"
@@ -200,6 +282,7 @@ def _build_system_prompt() -> str:
         "16. No redundant tool calls. Use tools only when needed. Never call tools to verify information already present "
         "in the chat history — answer from history instead.\n"
         f"{extension_rules_section}"
+        f"{preference_rules_text}"
         "\n## Output Formatting\n"
         "Always format tool output consistently:\n"
         "- diff_files: wrap the diff output in a ```diff code block.\n"
@@ -498,8 +581,14 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                 openai_effort = "high"
             extra_params["reasoning_effort"] = openai_effort
 
+    is_first_user_message = not any(msg.get("role") == "user" for msg in messages)
+    if is_first_user_message:
+        resolved_message = f"[System Instructions]\n{SYSTEM_PROMPT}\n\n[User Message]\n{message}"
+    else:
+        resolved_message = message
+
     client = OpenAI(base_url=provider["base_url"], api_key=api_key)
-    messages.append({"role": "user", "content": message})
+    messages.append({"role": "user", "content": resolved_message})
 
     while True:
         response_stream = None
