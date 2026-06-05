@@ -251,12 +251,17 @@ def _bench_start(task_id: str, agent: Any) -> Any:
             except Exception:
                 pass
 
-    # 3. Reset/Clear active Klat session and start a new session named bench_<task_id>
+    # 3. Save the original session so we can restore it after the bench task,
+    #    then reset/clear and start an isolated bench session.
+    original_session_id = sessions.get_active_session_id()
+    original_openai_messages = list(agent._openai_messages) if hasattr(agent, "_openai_messages") else []
+    original_gemini_history = list(agent._gemini_history) if hasattr(agent, "_gemini_history") else []
+
     sessions.delete_session(f"bench_{task_id}")
     sessions.clear_transcript()
     sessions.set_active_session_id(f"bench_{task_id}")
 
-    # Re-initialize the agent
+    # Re-initialize the agent with a completely fresh context
     project, location = ensure_env()
     new_agent = KlatAgent(project, location)
     new_agent.reset()
@@ -299,10 +304,23 @@ def _bench_start(task_id: str, agent: Any) -> Any:
     try:
         new_agent.chat(organic_prompt)
     finally:
-        # 6. Finalize telemetry now that the agent has finished
+
+        # 7. Finalize telemetry now that the agent has finished
         _bench_finalize(new_agent, task_id, task_results_dir, backup_dir)
 
-        # 7. Git revert all changes and wait 2 seconds
+        # 7. Delete the bench session so it doesn't bleed into the main Klat session
+        sessions.delete_session(f"bench_{task_id}")
+
+        # 8. Restore the original session so the main Klat loop is unaffected
+        sessions.clear_transcript()
+        sessions.set_active_session_id(original_session_id)
+        if agent and hasattr(agent, "_openai_messages"):
+            agent._openai_messages = original_openai_messages
+        if agent and hasattr(agent, "_gemini_history"):
+            agent._gemini_history = original_gemini_history
+        KlatAgent.active_instance = agent
+
+        # 9. Git revert all changes and wait 2 seconds
         klat.ui.print_accent("Resetting workspace to HEAD and cleaning untracked files...")
         import subprocess
         import time

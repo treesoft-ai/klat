@@ -740,10 +740,24 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
         # Execute tool calls
         for tc_idx, tc_data in sorted(accumulated_tool_calls.items()):
             name = tc_data.get("name") or "unknown_tool"
+            raw_args_str = tc_data.get("arguments") or "{}"
             try:
-                args = json.loads(tc_data.get("arguments") or "{}")
-            except (json.JSONDecodeError, TypeError):
-                args = {}
+                args = json.loads(raw_args_str)
+            except (json.JSONDecodeError, TypeError) as _json_err:
+                # The provider streamed a truncated/malformed response — tell the model
+                # explicitly so it can retry with a different approach instead of looping.
+                ui.agent_step(name, "(malformed arguments — response was truncated)")
+                messages.append({
+                    "role":         "tool",
+                    "tool_call_id": tc_data.get("id") or "",
+                    "content":      (
+                        f"Error: your tool call arguments could not be parsed "
+                        f"({_json_err}). This is likely because the response was "
+                        f"truncated mid-stream. Please retry using a shorter or "
+                        f"simpler approach (e.g. write the file in smaller parts)."
+                    ),
+                })
+                continue
 
             ui.agent_step(name, _args_summary(args))
             raw = dispatch(name, args)
