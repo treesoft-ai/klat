@@ -749,6 +749,7 @@ def main() -> None:
             _agent_busy = False
             print()
             agent_error("Stopped.")
+            ui.print_session_summary()
         except Exception as e:
             _agent_busy = False
             agent_error(str(e))

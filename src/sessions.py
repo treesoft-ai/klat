@@ -11,6 +11,21 @@ ACTIVE_SESSION_FILE = Path.home() / ".klat" / "settings" / "config.json"
 _current_transcript: list[dict[str, Any]] = []
 _active_session_id: str | None = None
 
+# Session-wide token tracking
+_session_tokens: dict[str, int] = {"input": 0, "output": 0}
+
+def add_tokens(input_tokens: int, output_tokens: int) -> None:
+    global _session_tokens
+    _session_tokens["input"] += input_tokens
+    _session_tokens["output"] += output_tokens
+
+def get_token_usage() -> dict[str, int]:
+    return _session_tokens
+
+def reset_session_tokens() -> None:
+    global _session_tokens
+    _session_tokens = {"input": 0, "output": 0}
+
 def get_sessions_dir() -> Path:
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     return SESSIONS_DIR
@@ -84,6 +99,7 @@ def get_transcript() -> list[dict[str, Any]]:
 def clear_transcript() -> None:
     global _current_transcript
     _current_transcript = []
+    reset_session_tokens()
 
 def serialize_history(history: list, backend: str) -> list:
     if backend == "gemini":
@@ -121,7 +137,8 @@ def save_session(session_id: str, provider: str, model: str, reasoning: str, his
         "reasoning": reasoning,
         "backend": backend,
         "history": serialize_history(history, backend),
-        "transcript": _current_transcript
+        "transcript": _current_transcript,
+        "token_usage": _session_tokens
     }
     
     with open(session_path / "session.json", "w", encoding="utf-8") as f:
@@ -138,6 +155,9 @@ def load_session(session_id: str) -> dict | None:
             
         global _current_transcript
         _current_transcript = state.get("transcript", [])
+        
+        global _session_tokens
+        _session_tokens = state.get("token_usage", {"input": 0, "output": 0})
         
         # Deserialize history
         backend = state.get("backend", "openai-compat")

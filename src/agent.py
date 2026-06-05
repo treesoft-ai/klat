@@ -249,6 +249,36 @@ def _args_summary(args: dict) -> str:
     return ", ".join(items)
 
 
+def extract_gemini_tokens(usage) -> tuple[int, int]:
+    if not usage:
+        return 0, 0
+    p_tok = (
+        getattr(usage, "prompt_token_count", None) or 
+        getattr(usage, "prompt_tokens", None) or 
+        0
+    )
+    c_tok = (
+        getattr(usage, "candidates_token_count", None) or 
+        getattr(usage, "candidates_tokens", None) or 
+        getattr(usage, "completion_token_count", None) or 
+        getattr(usage, "completion_tokens", None) or 
+        0
+    )
+    return p_tok, c_tok
+
+
+def extract_openai_tokens(usage) -> tuple[int, int]:
+    if not usage:
+        return 0, 0
+    if isinstance(usage, dict):
+        p_tok = usage.get("prompt_tokens", 0) or 0
+        c_tok = usage.get("completion_tokens", 0) or 0
+    else:
+        p_tok = getattr(usage, "prompt_tokens", 0) or 0
+        c_tok = getattr(usage, "completion_tokens", 0) or 0
+    return p_tok, c_tok
+
+
 # ---------------------------------------------------------------------------
 # Gemini backend (Vertex AI / AI Studio)
 # ---------------------------------------------------------------------------
@@ -327,7 +357,18 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
         printed_reply_prefix = False
         accumulated_thoughts = []
 
+        last_prompt_tokens = 0
+        last_candidates_tokens = 0
+
         for chunk in response_stream:
+            usage = getattr(chunk, "usage_metadata", None)
+            if usage:
+                p_tok, c_tok = extract_gemini_tokens(usage)
+                if p_tok:
+                    last_prompt_tokens = p_tok
+                if c_tok:
+                    last_candidates_tokens = c_tok
+
             if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                 continue
 
@@ -355,6 +396,10 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
                             print(f"{ui.GREEN}·{ui.RESET} ", end="", flush=True)
                             printed_reply_prefix = True
                         print(p.text, end="", flush=True)
+
+        if last_prompt_tokens or last_candidates_tokens:
+            from src import sessions
+            sessions.add_tokens(last_prompt_tokens, last_candidates_tokens)
 
         if printed_thought_prefix:
             print(ui.RESET)
@@ -457,6 +502,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
     messages.append({"role": "user", "content": message})
 
     while True:
+        response_stream = None
         try:
             response_stream = client.chat.completions.create(
                 model=model,
@@ -464,26 +510,48 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                 tools=_get_openai_tools(),
                 tool_choice="auto",
                 stream=True,
+                stream_options={"include_usage": True},
                 **extra_params
             )
         except Exception as e:
-            if extra_params:
-                err_msg = str(e).lower()
-                if "mandatory" in err_msg or "cannot be disabled" in err_msg:
-                    ui.agent_step("reasoning", "Mandatory for this model; using defaults")
-                elif "unexpected keyword argument" in err_msg or "extra_body" in err_msg or "extra_params" in err_msg:
-                    ui.agent_step("reasoning-fallback", "Not supported by this model; retrying")
-                else:
-                    ui.agent_step("reasoning-fallback", "Unsupported or error encountered; retrying")
+            try:
                 response_stream = client.chat.completions.create(
                     model=model,
                     messages=messages,
                     tools=_get_openai_tools(),
                     tool_choice="auto",
-                    stream=True
+                    stream=True,
+                    **extra_params
                 )
-            else:
-                raise e
+            except Exception as e2:
+                if extra_params:
+                    err_msg = str(e2).lower()
+                    if "mandatory" in err_msg or "cannot be disabled" in err_msg:
+                        ui.agent_step("reasoning", "Mandatory for this model; using defaults")
+                    elif "unexpected keyword argument" in err_msg or "extra_body" in err_msg or "extra_params" in err_msg:
+                        ui.agent_step("reasoning-fallback", "Not supported by this model; retrying")
+                    else:
+                        ui.agent_step("reasoning-fallback", "Unsupported or error encountered; retrying")
+                else:
+                    raise e2
+
+                try:
+                    response_stream = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=_get_openai_tools(),
+                        tool_choice="auto",
+                        stream=True,
+                        stream_options={"include_usage": True}
+                    )
+                except Exception:
+                    response_stream = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=_get_openai_tools(),
+                        tool_choice="auto",
+                        stream=True
+                    )
 
         # Stream parser state
         accumulated_content = ""
@@ -494,8 +562,18 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
         printed_reply_prefix = False
         in_think_mode = False
         processed_len = 0
+        last_prompt_tokens = 0
+        last_completion_tokens = 0
 
         for chunk in response_stream:
+            usage = getattr(chunk, "usage", None)
+            if usage:
+                p_tok, c_tok = extract_openai_tokens(usage)
+                if p_tok:
+                    last_prompt_tokens = p_tok
+                if c_tok:
+                    last_completion_tokens = c_tok
+
             choices = getattr(chunk, "choices", None)
             if not choices:
                 continue
@@ -604,6 +682,10 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                         accumulated_tool_calls[idx]["name"] = func.name
                     if getattr(func, "arguments", None):
                         accumulated_tool_calls[idx]["arguments"] += func.arguments
+
+        if last_prompt_tokens or last_completion_tokens:
+            from src import sessions
+            sessions.add_tokens(last_prompt_tokens, last_completion_tokens)
 
         # Clean up any active style prefixes
         if printed_thought_prefix:
@@ -999,6 +1081,12 @@ def run_single_completion(prompt: str, system_prompt: str) -> str:
                 system_instruction=system_prompt,
             ),
         )
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
+            p_tok, c_tok = extract_gemini_tokens(usage)
+            from src import sessions
+            sessions.add_tokens(p_tok, c_tok)
+
         parts = []
         for p in response.candidates[0].content.parts:
             if hasattr(p, "text") and p.text:
@@ -1017,4 +1105,10 @@ def run_single_completion(prompt: str, system_prompt: str) -> str:
                 {"role": "user", "content": prompt}
             ]
         )
+        usage = getattr(response, "usage", None)
+        if usage:
+            p_tok, c_tok = extract_openai_tokens(usage)
+            from src import sessions
+            sessions.add_tokens(p_tok, c_tok)
+
         return (response.choices[0].message.content or "").strip()

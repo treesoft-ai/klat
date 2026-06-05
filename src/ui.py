@@ -463,6 +463,7 @@ def prompt_input(label: str = "task") -> str:
             return input(f"{GREEN}>{RESET} ")
     except (KeyboardInterrupt, EOFError):
         print()
+        print_session_summary()
         sys.exit(0)
 
 
@@ -573,5 +574,24 @@ def agent_error(msg: str) -> None:
     try:
         from src import sessions
         sessions.record_ui_event("error", text=msg)
+    except Exception:
+        pass
+
+
+def print_session_summary() -> None:
+    """Print the session token usage summary."""
+    try:
+        from src import sessions
+        usage = sessions.get_token_usage()
+        inp = usage.get("input", 0)
+        out = usage.get("output", 0)
+        total = inp + out
+        
+        print(f"\n  {GREEN}🌿 Klat Session Summary{RESET}")
+        print(f"  {DIM}─────────────────────────────────────────────────────{RESET}")
+        print(f"    Input tokens  : {GREEN}{inp:,}{RESET}")
+        print(f"    Output tokens : {GREEN}{out:,}{RESET}")
+        print(f"    Total tokens  : {GREEN}{total:,}{RESET}")
+        print(f"  {DIM}─────────────────────────────────────────────────────{RESET}\n")
     except Exception:
         pass
