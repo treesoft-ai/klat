@@ -682,6 +682,7 @@ def main() -> None:
 
             # ── Exit ──────────────────────────────────────────────────────────
             if raw.lower() in {"exit", "quit", "q"}:
+                print()
                 ui.print_session_summary()
                 sys.exit(0)
 

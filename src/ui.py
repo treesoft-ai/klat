@@ -646,12 +646,14 @@ def print_session_summary() -> None:
         inp = usage.get("input", 0)
         out = usage.get("output", 0)
         total = inp + out
+        if total == 0:
+            return
         
-        print(f"\n  {GREEN}🌿 Klat Session Summary{RESET}")
+        print(f"  {GREEN}session summary{RESET}")
         print(f"  {DIM}─────────────────────────────────────────────────────{RESET}")
-        print(f"    Input tokens  : {GREEN}{inp:,}{RESET}")
-        print(f"    Output tokens : {GREEN}{out:,}{RESET}")
-        print(f"    Total tokens  : {GREEN}{total:,}{RESET}")
+        print(f"    input  : {GREEN}{inp:,}{RESET}")
+        print(f"    output : {GREEN}{out:,}{RESET}")
+        print(f"    total  : {GREEN}{total:,}{RESET}")
         print(f"  {DIM}─────────────────────────────────────────────────────{RESET}\n")
     except Exception:
         pass
