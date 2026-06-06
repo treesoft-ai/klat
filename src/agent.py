@@ -96,114 +96,37 @@ def _load_user_instructions() -> str:
 # System prompt
 # ---------------------------------------------------------------------------
 
-def _build_system_prompt() -> str:
-    # Gather dynamic tools and custom rules from extensions
-    try:
-        from src.extensions import DYNAMIC_TOOLS, CUSTOM_RULES
-        dynamic_tools_text = ""
-        for name, info in DYNAMIC_TOOLS.items():
-            desc = info["declaration"]["description"]
-            desc_line = desc.split("\n")[0]
-            dynamic_tools_text += f"- {name} — {desc_line}\n"
+# ---------------------------------------------------------------------------
+# System prompt section builders
+# ---------------------------------------------------------------------------
 
-        custom_rules_text = ""
-        for rule in CUSTOM_RULES:
-            custom_rules_text += f"- {rule}\n"
-    except ImportError:
-        dynamic_tools_text = ""
-        custom_rules_text = ""
+def _section_identity() -> str:
+    return "You are Klat, a conversational assistant.\n"
 
-    user_inst = _load_user_instructions()
-    user_inst_section = f"## User Instructions\n{user_inst}\n\n" if user_inst else ""
-    extension_tools_section = f"\n(Extension tools)\n{dynamic_tools_text}" if dynamic_tools_text else "\n"
-    extension_rules_section = f"\n{custom_rules_text}" if custom_rules_text else ""
 
-    # Load user onboarding preferences if available
-    try:
-        from src.onboarding import load_preferences
-        prefs = load_preferences()
-    except Exception:
-        prefs = {}
+def _section_environment() -> str:
+    return f"## Environment\nWorking directory: {WORK_DIR}\n\n"
 
-    profile_text = ""
-    preference_rules = []
 
-    if prefs:
-        role = prefs.get("role", "")
-        experience = prefs.get("coding_experience", "")
-        ai_fam = prefs.get("ai_familiarity", "")
-        languages = prefs.get("languages", [])
-
-        # Build User Profile section
-        profile_parts = []
-        if role:
-            profile_parts.append(f"- Role: {role}")
-        if experience:
-            profile_parts.append(f"- Coding Experience: {experience}")
-        if ai_fam:
-            profile_parts.append(f"- AI Tooling Familiarity: {ai_fam}")
-        if languages:
-            profile_parts.append(f"- Primary Languages: {', '.join(languages)}")
-
-        if profile_parts:
-            profile_text = "## User Profile\n" + "\n".join(profile_parts) + "\n\n"
-
-        # Map preferences to instructions
-        # 1. Experience mapping
-        if experience:
-            exp_lower = experience.lower()
-            if "newcomer" in exp_lower or "beginner" in exp_lower:
-                preference_rules.append(
-                    "Explain programming concepts and syntax clearly. Comment your code blocks thoroughly and explain command/tool side effects before invoking them."
-                )
-            elif "advanced" in exp_lower or "expert" in exp_lower:
-                preference_rules.append(
-                    "Be highly concise. Skip basic explanations of syntax, git, or command usage. Assume expert-level technical fluency and output optimized, direct code."
-                )
-
-        # 2. AI familiarity mapping
-        if ai_fam:
-            ai_lower = ai_fam.lower()
-            if "curious" in ai_lower or "exploring" in ai_lower:
-                preference_rules.append(
-                    "Guide the user step-by-step. Provide helpful suggestions on how they can run or test the outputs."
-                )
-            elif "power user" in ai_lower:
-                preference_rules.append(
-                    "Minimize conversational filler. Focus strictly on execution, raw outputs, and advanced integrations."
-                )
-
-        # 3. Role mapping
-        if role:
-            role_lower = role.lower()
-            if "designer" in role_lower or "web" in role_lower:
-                preference_rules.append(
-                    "Prioritize UX/UI polish, clean CSS, responsive layouts, accessibility, and interactive design aesthetics."
-                )
-            elif "data" in role_lower or "ml" in role_lower or "machine learning" in role_lower:
-                preference_rules.append(
-                    "Prioritize data pipelines, performance, standard data libraries (e.g. pandas, numpy), and code reproducibility."
-                )
-            elif "founder" in role_lower or "indie" in role_lower or "hacker" in role_lower:
-                preference_rules.append(
-                    "Focus on speed, pragmatism, and simplicity. Build lightweight MVPs, prefer self-contained scripts, and avoid over-engineering."
-                )
-
-        # 4. Languages mapping
-        if languages:
-            preference_rules.append(
-                f"When generating scripts, test cases, or coding examples, prioritize the following languages: {', '.join(languages)}."
-            )
-
-    preference_rules_text = ""
-    if preference_rules:
-        preference_rules_text = "\n" + "\n".join(f"- {rule}" for rule in preference_rules)
-
+def _section_tools_essential() -> str:
     return (
-        "You are Klat, a software engineering assistant running in the terminal.\n\n"
-        f"{profile_text}"
-        "## Environment\n"
-        f"Working directory: {WORK_DIR}\n\n"
+        "## Tools\n"
+        "- read_file(path, [start_line], [end_line])           — read a single file (with optional line range) or an array of paths\n"
+        "- write_file(path, content)                           — create or overwrite a file\n"
+        "- patch_file(path, start_line, end_line, new_content) — replace lines in-place\n"
+        "- insert_lines(path, after_line, content)             — insert lines without replacing (after_line=0 to prepend)\n"
+        "- replace_in_file(path, old_text, new_text, [count]) — find-and-replace by text; count=-1 for all occurrences\n"
+        "- list_dir(path)                                      — list files and subdirectories\n"
+        "- find_file(pattern, [path])                          — find files by name/glob pattern\n"
+        "- tree([path], [max_depth], [show_hidden], [dirs_only]) — display directory tree\n"
+        "- search_files(pattern, [path], [include], [case_sensitive]) — grep content by regex\n"
+        "- run_command(command, [cwd], [timeout])               — run a shell command\n"
+        "- git(op, [args], [cwd])                              — run a git operation (status, log, diff, add, commit, checkout, branch, stash, blame, show, pull, push)\n"
+    )
+
+
+def _section_tools_full(extension_tools_section: str) -> str:
+    return (
         "## Tools\n"
         "- read_file(path, [start_line], [end_line])           — read a single file (with optional line range) or an array of paths\n"
         "- write_file(path, content)                           — create or overwrite a file\n"
@@ -227,6 +150,40 @@ def _build_system_prompt() -> str:
         "- process_list([filter])                              — list running processes\n"
         "- fetch_ai_models([search], [provider], [min_context_length], [modality], [sort_by], [sort_order], [page], [limit]) — fetch, filter, sort and paginate AI models from OpenRouter\n"
         f"{extension_tools_section}"
+    )
+
+
+def _section_rules_core() -> str:
+    return (
+        "\n## Rules\n"
+        "1. Answer every question. Every question in the user's message must be answered — never skip or redirect. "
+        "Casual questions like 'How are you?' must be answered briefly. "
+        "A pure greeting with no question (e.g., 'hey', 'hi') → one sentence only: 'Hey, what are we working on?'\n"
+        "2. Style. Output plain text only — this is a terminal with no markdown renderer. "
+        "Never use bold (**text**), italic (*text* or _text_), headers (# ## ###), or markdown tables (| col | col |). "
+        "Plain bullet lists with '- item' are fine. Code must be in fenced code blocks. No emojis. "
+        "No filler phrases ('Certainly!', 'Great question!', 'Of course!', 'Sure, I can help!'). "
+        "No narrating your actions or listing capabilities unprompted. "
+        "Professional, friendly, concise, grammatically correct. "
+        "Keep responses short and factual. No unsolicited suggestions.\n"
+        "3. No 'done' tool. There is no 'done' tool in this environment. "
+        "Never attempt to call it. When finished, reply with a direct text response.\n"
+        "4. Use the right tool. Never substitute run_command for a purpose-built tool. "
+        "ALWAYS use tree when the user asks for a directory tree, project structure, or layout — "
+        "never use run_command to call tree, find, ls, or dir for this purpose.\n"
+        "5. Batch file reads. NEVER make multiple read_file calls in parallel or sequentially in the same turn. "
+        "If you need to read 2 or more files, pass an array of paths in a single read_file call.\n"
+        "6. Prefer targeted edits. For changes to existing files, prefer patch_file or replace_in_file over write_file. "
+        "Use replace_in_file when you know the exact text but not the line numbers. "
+        "Use patch_file when you know the line range. "
+        "Use insert_lines to add content without removing anything.\n"
+        "7. Git tool only. NEVER use run_command for any git operation. "
+        "ALWAYS use the git tool (e.g., git(op='status'), git(op='log', args=['-15'])).\n"
+    )
+
+
+def _section_rules_full(extension_rules_section: str, preference_rules_text: str) -> str:
+    return (
         "\n## Rules\n"
         "1. Answer every question. Every question in the user's message must be answered — never skip or redirect. "
         "Casual questions like 'How are you?' must be answered briefly (e.g., 'Good, thanks. What are we working on?'). "
@@ -283,6 +240,11 @@ def _build_system_prompt() -> str:
         "in the chat history — answer from history instead.\n"
         f"{extension_rules_section}"
         f"{preference_rules_text}"
+    )
+
+
+def _section_output_formatting() -> str:
+    return (
         "\n## Output Formatting\n"
         "Always format tool output consistently:\n"
         "- diff_files: wrap the diff output in a ```diff code block.\n"
@@ -303,6 +265,141 @@ def _build_system_prompt() -> str:
         "exit code on the last line as [exit code: N].\n"
         "- search_files: show results as 'file:line: content', grouped by file.\n"
         "- tree: show the output verbatim in a plain code block (no extra commentary).\n"
+    )
+
+
+def _load_prefs_sections() -> tuple[str, str]:
+    """Return (profile_text, preference_rules_text) from onboarding preferences."""
+    try:
+        from src.onboarding import load_preferences
+        prefs = load_preferences()
+    except Exception:
+        prefs = {}
+
+    profile_text = ""
+    preference_rules: list[str] = []
+
+    if prefs:
+        role = prefs.get("role", "")
+        experience = prefs.get("coding_experience", "")
+        ai_fam = prefs.get("ai_familiarity", "")
+        languages = prefs.get("languages", [])
+
+        profile_parts = []
+        if role:
+            profile_parts.append(f"- Role: {role}")
+        if experience:
+            profile_parts.append(f"- Coding Experience: {experience}")
+        if ai_fam:
+            profile_parts.append(f"- AI Tooling Familiarity: {ai_fam}")
+        if languages:
+            profile_parts.append(f"- Primary Languages: {', '.join(languages)}")
+
+        if profile_parts:
+            profile_text = "## User Profile\n" + "\n".join(profile_parts) + "\n\n"
+
+        if experience:
+            exp_lower = experience.lower()
+            if "newcomer" in exp_lower or "beginner" in exp_lower:
+                preference_rules.append(
+                    "Explain programming concepts and syntax clearly. Comment your code blocks thoroughly and explain command/tool side effects before invoking them."
+                )
+            elif "advanced" in exp_lower or "expert" in exp_lower:
+                preference_rules.append(
+                    "Be highly concise. Skip basic explanations of syntax, git, or command usage. Assume expert-level technical fluency and output optimized, direct code."
+                )
+
+        if ai_fam:
+            ai_lower = ai_fam.lower()
+            if "curious" in ai_lower or "exploring" in ai_lower:
+                preference_rules.append(
+                    "Guide the user step-by-step. Provide helpful suggestions on how they can run or test the outputs."
+                )
+            elif "power user" in ai_lower:
+                preference_rules.append(
+                    "Minimize conversational filler. Focus strictly on execution, raw outputs, and advanced integrations."
+                )
+
+        if role:
+            role_lower = role.lower()
+            if "designer" in role_lower or "web" in role_lower:
+                preference_rules.append(
+                    "Prioritize UX/UI polish, clean CSS, responsive layouts, accessibility, and interactive design aesthetics."
+                )
+            elif "data" in role_lower or "ml" in role_lower or "machine learning" in role_lower:
+                preference_rules.append(
+                    "Prioritize data pipelines, performance, standard data libraries (e.g. pandas, numpy), and code reproducibility."
+                )
+            elif "founder" in role_lower or "indie" in role_lower or "hacker" in role_lower:
+                preference_rules.append(
+                    "Focus on speed, pragmatism, and simplicity. Build lightweight MVPs, prefer self-contained scripts, and avoid over-engineering."
+                )
+
+        if languages:
+            preference_rules.append(
+                f"When generating scripts, test cases, or coding examples, prioritize the following languages: {', '.join(languages)}."
+            )
+
+    preference_rules_text = ""
+    if preference_rules:
+        preference_rules_text = "\n" + "\n".join(f"- {rule}" for rule in preference_rules)
+
+    return profile_text, preference_rules_text
+
+
+# ---------------------------------------------------------------------------
+# System prompt assembly by complexity level
+# ---------------------------------------------------------------------------
+
+def _build_system_prompt() -> str:
+    from src.config import current_complexity
+    level = current_complexity()
+
+    if level == "nano":
+        return (
+            f"{_section_identity()}"
+            "Output plain text only — no markdown, no bold, no headers, no emojis. "
+            "Be concise and direct. Answer every question asked."
+        )
+
+    # Gather extension data (used by essential and full)
+    try:
+        from src.extensions import DYNAMIC_TOOLS, CUSTOM_RULES
+        dynamic_tools_text = "".join(
+            f"- {name} — {info['declaration']['description'].split(chr(10))[0]}\n"
+            for name, info in DYNAMIC_TOOLS.items()
+        )
+        custom_rules_text = "".join(f"- {rule}\n" for rule in CUSTOM_RULES)
+    except ImportError:
+        dynamic_tools_text = ""
+        custom_rules_text = ""
+
+    extension_tools_section = f"\n(Extension tools)\n{dynamic_tools_text}" if dynamic_tools_text else "\n"
+    extension_rules_section = f"\n{custom_rules_text}" if custom_rules_text else ""
+
+    profile_text, preference_rules_text = _load_prefs_sections()
+
+    if level == "essential":
+        return (
+            "You are Klat, a software engineering assistant running in the terminal.\n\n"
+            f"{profile_text}"
+            f"{_section_environment()}"
+            f"{_section_tools_essential()}"
+            f"{_section_rules_core()}"
+            f"{preference_rules_text}"
+        )
+
+    # level == "full"
+    user_inst = _load_user_instructions()
+    user_inst_section = f"## User Instructions\n{user_inst}\n\n" if user_inst else ""
+
+    return (
+        "You are Klat, a software engineering assistant running in the terminal.\n\n"
+        f"{profile_text}"
+        f"{_section_environment()}"
+        f"{_section_tools_full(extension_tools_section)}"
+        f"{_section_rules_full(extension_rules_section, preference_rules_text)}"
+        f"{_section_output_formatting()}"
         f"\n{user_inst_section}"
     )
 
@@ -395,7 +492,7 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
         )
         for d in get_all_tool_declarations()
     ]
-    tools = [types.Tool(function_declarations=declarations)]
+    tools = [types.Tool(function_declarations=declarations)] if declarations else None
 
     reasoning = current_reasoning().lower()
     thinking_config = None
@@ -590,26 +687,28 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
     client = OpenAI(base_url=provider["base_url"], api_key=api_key)
     messages.append({"role": "user", "content": resolved_message})
 
+    openai_tools = _get_openai_tools()
+    base_params = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+    if openai_tools:
+        base_params["tools"] = openai_tools
+        base_params["tool_choice"] = "auto"
+
     while True:
         response_stream = None
         try:
             response_stream = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=_get_openai_tools(),
-                tool_choice="auto",
-                stream=True,
+                **base_params,
                 stream_options={"include_usage": True},
                 **extra_params
             )
         except Exception as e:
             try:
                 response_stream = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    tools=_get_openai_tools(),
-                    tool_choice="auto",
-                    stream=True,
+                    **base_params,
                     **extra_params
                 )
             except Exception as e2:
@@ -626,20 +725,12 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
 
                 try:
                     response_stream = client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        tools=_get_openai_tools(),
-                        tool_choice="auto",
-                        stream=True,
+                        **base_params,
                         stream_options={"include_usage": True}
                     )
                 except Exception:
                     response_stream = client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        tools=_get_openai_tools(),
-                        tool_choice="auto",
-                        stream=True
+                        **base_params
                     )
 
         # Stream parser state

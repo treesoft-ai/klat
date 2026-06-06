@@ -123,6 +123,7 @@ if HAS_PROMPT_TOOLKIT:
                 "/model",
                 "/reasoning",
                 "/streaming",
+                "/complexity",
                 "/setting set",
                 "/setting reset",
                 "/setting random",
@@ -162,6 +163,8 @@ if HAS_PROMPT_TOOLKIT:
                         candidates = ["none", "minimal", "low", "medium", "high", "xhigh"]
                     elif key == "streaming":
                         candidates = ["on", "off"]
+                    elif key == "complexity":
+                        candidates = ["nano", "essential", "full"]
                     elif key == "provider":
                         try:
                             from src.config import configured_providers
@@ -176,7 +179,7 @@ if HAS_PROMPT_TOOLKIT:
                         from src.config import get_all_settings
                         keys = sorted(get_all_settings().keys())
                     except Exception:
-                        keys = ["ascii_style", "model", "provider", "reasoning", "streaming"]
+                        keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming"]
                     for k in keys:
                         if k.startswith(arg) and k != arg:
                             return Suggestion(k[len(arg):])
@@ -189,7 +192,7 @@ if HAS_PROMPT_TOOLKIT:
                     from src.config import get_all_settings
                     keys = sorted(get_all_settings().keys())
                 except Exception:
-                    keys = ["ascii_style", "model", "provider", "reasoning", "streaming"]
+                    keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming"]
                 for k in keys:
                     if k.startswith(arg) and k != arg:
                         return Suggestion(k[len(arg):])
@@ -198,7 +201,7 @@ if HAS_PROMPT_TOOLKIT:
             # Smart completion for /setting random
             if text.startswith("/setting random "):
                 arg = text[len("/setting random "):]
-                keys = ["ascii_style", "model", "provider", "reasoning", "streaming"]
+                keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming"]
                 for k in keys:
                     if k.startswith(arg) and k != arg:
                         return Suggestion(k[len(arg):])
@@ -221,6 +224,15 @@ if HAS_PROMPT_TOOLKIT:
             if text.startswith("/reasoning "):
                 arg = text[len("/reasoning "):]
                 levels = ["none", "minimal", "low", "medium", "high", "xhigh"]
+                for lvl in levels:
+                    if lvl.startswith(arg) and lvl != arg:
+                        return Suggestion(lvl[len(arg):])
+                return None
+
+            # Smart completion for /complexity
+            if text.startswith("/complexity "):
+                arg = text[len("/complexity "):]
+                levels = ["nano", "essential", "full"]
                 for lvl in levels:
                     if lvl.startswith(arg) and lvl != arg:
                         return Suggestion(lvl[len(arg):])

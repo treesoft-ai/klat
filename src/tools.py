@@ -635,6 +635,36 @@ TOOL_DECLARATIONS = [
     }
 ]
 
+# Minimum complexity level required to expose each built-in tool.
+# "essential" maps to level 2, "full" maps to level 3.
+# Tools absent from this map default to "essential".
+TOOL_LEVEL_MAP: dict[str, str] = {
+    "read_file":       "nano",
+    "write_file":      "nano",
+    "patch_file":      "essential",
+    "replace_in_file": "essential",
+    "insert_lines":    "essential",
+    "list_dir":        "essential",
+    "find_file":       "essential",
+    "search_files":    "essential",
+    "tree":            "essential",
+    "run_command":     "nano",
+    "git":             "essential",
+    # full-only tools
+    "diff_files":      "full",
+    "copy_file":       "full",
+    "move_file":       "full",
+    "delete_file":     "full",
+    "delete_dir":      "full",
+    "create_dir":      "full",
+    "http_request":    "full",
+    "env_var":         "full",
+    "process_list":    "full",
+    "fetch_ai_models": "full",
+}
+
+# Ordered precedence for level comparison.
+_LEVEL_ORDER = ("nano", "essential", "full")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1467,10 +1497,27 @@ def _update_bench_telemetry(tool_name: str, args: dict, result: str) -> None:
 # ---------------------------------------------------------------------------
 
 def get_all_tool_declarations() -> list[dict]:
-    """Combine static built-in tool declarations with dynamic extension tools."""
+    """Return tool declarations filtered by the active complexity level.
+
+    Nano: read_file, write_file, run_command.
+    Essential: built-in tools at or below 'essential' tier.
+    Full: all built-in and extension tools.
+    """
+    from src.config import current_complexity
     from src.extensions import DYNAMIC_TOOLS
-    dynamic_decls = [info["declaration"] for info in DYNAMIC_TOOLS.values()]
-    return TOOL_DECLARATIONS + dynamic_decls
+
+    level = current_complexity()
+    level_idx = _LEVEL_ORDER.index(level)
+    filtered = [
+        d for d in TOOL_DECLARATIONS
+        if _LEVEL_ORDER.index(TOOL_LEVEL_MAP.get(d["name"], "essential")) <= level_idx
+    ]
+
+    if level == "full":
+        dynamic_decls = [info["declaration"] for info in DYNAMIC_TOOLS.values()]
+        return filtered + dynamic_decls
+
+    return filtered
 
 
 _TOOL_UNAVAILABLE_MSG = (

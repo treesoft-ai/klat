@@ -3,7 +3,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 """
 
 import sys
-from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value
+from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
 from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
@@ -513,6 +513,8 @@ def _cmd_help() -> None:
   /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
   /streaming             show current streaming status
   /streaming <on|off>    toggle streaming response on or off
+  /complexity            show current complexity level
+  /complexity <level>    set complexity level (nano, essential, full)
   /setting               show all settings and their current values
   /setting set <k> <v>   set setting key <k> to value <v>
   /setting reset <k>     reset setting key <k> to default
@@ -550,6 +552,30 @@ def _cmd_onboard(agent: KlatAgent) -> None:
     rebuild_system_prompt()
     agent.refresh_system_prompt()
 
+
+
+def _cmd_complexity(args: str, agent: "KlatAgent") -> None:
+    """Handle /complexity [level] — show or change the complexity level."""
+    val = args.strip().lower()
+
+    if not val:
+        level = current_complexity()
+        print(f"\n  Complexity: {GREEN}{level.capitalize()}{RESET}")
+        print(f"  {DIM}nano{RESET}      — minimal chat assistant, no tools, tiny prompt")
+        print(f"  {DIM}essential{RESET} — core file/git tools, trimmed prompt")
+        print(f"  {DIM}full{RESET}      — all tools, full prompt (default)")
+        print()
+        return
+
+    try:
+        set_complexity(val)
+        from src.agent import rebuild_system_prompt
+        rebuild_system_prompt()
+        agent.refresh_system_prompt()
+        agent_print(f"Complexity set to {GREEN}{current_complexity().capitalize()}{RESET}")
+    except ValueError as e:
+        agent_error(str(e))
+        print(f"  Available levels: {', '.join(COMPLEXITY_LEVELS)}\n")
 
 
 def int_to_words(n: int) -> str:
@@ -700,6 +726,8 @@ def main() -> None:
                         _cmd_reasoning(remainder)
                     elif cmd == "streaming":
                         _cmd_streaming(remainder)
+                    elif cmd == "complexity":
+                        _cmd_complexity(remainder, agent)
                     elif cmd == "onboard":
                         _cmd_onboard(agent)
                     elif cmd == "extension":

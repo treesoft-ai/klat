@@ -35,14 +35,33 @@ ENV_FILE = ENV_DIR / ".env"
 # Runtime state — mutated by /provider and /model commands
 # ---------------------------------------------------------------------------
 
+COMPLEXITY_LEVELS = ("nano", "essential", "full")
+
 _state: dict = {
     "provider": None,   # None until ensure_env() resolves one
     "model":    None,   # None → use provider's default_model
     "reasoning": "none",
     "streaming": True,
+    "complexity": "full",
 }
 
 _config: dict = {}
+
+
+def current_complexity() -> str:
+    """Return the active complexity level: 'nano', 'essential', or 'full'."""
+    return _state.get("complexity", "full")
+
+
+def set_complexity(value: str) -> None:
+    """Set and persist the complexity level."""
+    val = value.strip().lower()
+    if val not in COMPLEXITY_LEVELS:
+        raise ValueError(
+            f"Invalid complexity level '{val}'. Choose from: {', '.join(COMPLEXITY_LEVELS)}"
+        )
+    _state["complexity"] = val
+    _persist()
 
 
 def current_reasoning() -> str:
@@ -101,7 +120,7 @@ def set_model(model: str) -> None:
 
 
 def _persist() -> None:
-    """Write provider, model, reasoning & streaming, plus other keys back to config.json."""
+    """Write provider, model, reasoning, streaming, complexity, plus other keys back to config.json."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     current_data = {}
     if CONFIG_FILE.exists():
@@ -115,6 +134,7 @@ def _persist() -> None:
     current_data["model"] = _state["model"] or ""
     current_data["reasoning"] = _state["reasoning"] or "none"
     current_data["streaming"] = current_streaming()
+    current_data["complexity"] = current_complexity()
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, indent=2)
@@ -127,10 +147,11 @@ def get_all_settings() -> dict:
         "model": current_model() or "",
         "reasoning": current_reasoning() or "none",
         "streaming": "on" if current_streaming() else "off",
+        "complexity": current_complexity(),
         "ascii_style": get_ascii_style(),
     }
     for k, v in _config.items():
-        if k not in ("provider", "model", "reasoning", "streaming", "ascii_style"):
+        if k not in ("provider", "model", "reasoning", "streaming", "complexity", "ascii_style"):
             settings[k] = v
     return settings
 
@@ -152,6 +173,8 @@ def set_config_value(key: str, value: str) -> None:
             set_streaming(False)
         else:
             raise ValueError("Invalid streaming value. Use 'on' or 'off'.")
+    elif key_lower == "complexity":
+        set_complexity(value)
     elif key_lower == "ascii_style":
         val = value.strip().lower()
         allowed = {"default", "legacy", "experimental"}
@@ -183,6 +206,8 @@ def reset_config_value(key: str) -> None:
         set_reasoning("none")
     elif key_lower == "streaming":
         set_streaming(True)
+    elif key_lower == "complexity":
+        set_complexity("full")
     elif key_lower == "ascii_style":
         if "ascii_style" in _config:
             del _config["ascii_style"]
@@ -436,11 +461,12 @@ def ensure_env() -> tuple[str, str]:
         run_full_onboarding()
         _load_config()  # reload to pick up keys just written
 
-    # Restore persisted provider / model / reasoning / streaming choice
+    # Restore persisted provider / model / reasoning / streaming / complexity choice
     saved_provider = _config.get("provider", "").strip()
     saved_model    = _config.get("model", "").strip()
     saved_reasoning = _config.get("reasoning", "none").strip().lower()
     saved_streaming = _config.get("streaming")
+    saved_complexity = _config.get("complexity", "full").strip().lower()
 
     if saved_provider and saved_provider in PROVIDERS:
         _state["provider"] = saved_provider
@@ -452,6 +478,10 @@ def ensure_env() -> tuple[str, str]:
         _state["streaming"] = bool(saved_streaming)
     else:
         _state["streaming"] = True
+    if saved_complexity in COMPLEXITY_LEVELS:
+        _state["complexity"] = saved_complexity
+    else:
+        _state["complexity"] = "full"
 
     # Find the best available provider
     available = configured_providers()
