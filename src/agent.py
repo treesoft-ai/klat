@@ -179,6 +179,7 @@ def _section_rules_core() -> str:
         "Use insert_lines to add content without removing anything.\n"
         "7. Git tool only. NEVER use run_command for any git operation. "
         "ALWAYS use the git tool (e.g., git(op='status'), git(op='log', args=['-15'])).\n"
+        "8. Terminal environment. If the user asks what active terminal, shell, or console environment you are running in, answer directly using the 'Terminal Environment' value in your 'User Profile'. Do NOT call run_command or env_var tools for this purpose.\n"
     )
 
 
@@ -238,6 +239,7 @@ def _section_rules_full(extension_rules_section: str, preference_rules_text: str
         "and append '... (truncated — N lines total)'. Never silently drop content.\n"
         "16. No redundant tool calls. Use tools only when needed. Never call tools to verify information already present "
         "in the chat history — answer from history instead.\n"
+        "17. Terminal environment. If the user asks what active terminal, shell, or console environment you are running in, answer directly using the 'Terminal Environment' value in your 'User Profile'. Do NOT call run_command or env_var tools for this purpose.\n"
         f"{extension_rules_section}"
         f"{preference_rules_text}"
     )
@@ -276,7 +278,7 @@ def _load_prefs_sections() -> tuple[str, str]:
     except Exception:
         prefs = {}
 
-    profile_text = ""
+    profile_parts = []
     preference_rules: list[str] = []
 
     if prefs:
@@ -285,7 +287,6 @@ def _load_prefs_sections() -> tuple[str, str]:
         ai_fam = prefs.get("ai_familiarity", "")
         languages = prefs.get("languages", [])
 
-        profile_parts = []
         if role:
             profile_parts.append(f"- Role: {role}")
         if experience:
@@ -294,9 +295,6 @@ def _load_prefs_sections() -> tuple[str, str]:
             profile_parts.append(f"- AI Tooling Familiarity: {ai_fam}")
         if languages:
             profile_parts.append(f"- Primary Languages: {', '.join(languages)}")
-
-        if profile_parts:
-            profile_text = "## User Profile\n" + "\n".join(profile_parts) + "\n\n"
 
         if experience:
             exp_lower = experience.lower()
@@ -339,6 +337,21 @@ def _load_prefs_sections() -> tuple[str, str]:
             preference_rules.append(
                 f"When generating scripts, test cases, or coding examples, prioritize the following languages: {', '.join(languages)}."
             )
+
+    # Automatically detect the active terminal/shell environment and append to profile
+    try:
+        from src.terminal import detect_terminal_environment
+        term_env = detect_terminal_environment()
+        if term_env:
+            profile_parts.append(
+                f"- Terminal Environment: {term_env} (Use this value directly if asked about your terminal/shell environment instead of calling tools or running commands.)"
+            )
+    except Exception:
+        pass
+
+    profile_text = ""
+    if profile_parts:
+        profile_text = "## User Profile\n" + "\n".join(profile_parts) + "\n\n"
 
     preference_rules_text = ""
     if preference_rules:
