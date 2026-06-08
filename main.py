@@ -3,7 +3,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 """
 
 import sys
-from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS
+from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS, current_theme, set_theme
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
 from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
@@ -486,6 +486,13 @@ def _cmd_update(agent: KlatAgent) -> None:
 def _cmd_demo() -> None:
     """Handle /demo — run the interactive logo viewer."""
     from src import demo
+    from src.config import current_theme
+    from src.ui import stop_rainbow_animation, start_rainbow_animation
+
+    was_animated = (current_theme() == "animated_rainbow")
+    if was_animated:
+        stop_rainbow_animation()
+
     demo.main()
 
     # Restore Klat UI
@@ -495,6 +502,9 @@ def _cmd_demo() -> None:
     ext_count = load_extensions(silent=True)
     ext_text = int_to_words(ext_count)
     print_banner(_get_info_lines(ext_text))
+
+    if was_animated:
+        start_rainbow_animation()
 
     from src import sessions
     sessions.replay_transcript()
@@ -515,6 +525,8 @@ def _cmd_help() -> None:
   /streaming <on|off>    toggle streaming response on or off
   /complexity            show current complexity level
   /complexity <level>    set complexity level (nano, essential, full)
+  /theme                 list all themes
+  /theme <name>          set theme (presets or two hex codes for custom)
   /setting               show all settings and their current values
   /setting set <k> <v>   set setting key <k> to value <v>
   /setting reset <k>     reset setting key <k> to default
@@ -576,6 +588,35 @@ def _cmd_complexity(args: str, agent: "KlatAgent") -> None:
     except ValueError as e:
         agent_error(str(e))
         print(f"  Available levels: {', '.join(COMPLEXITY_LEVELS)}\n")
+
+
+def _cmd_theme(args: str) -> None:
+    """Handle /theme [name] — show or change the active theme."""
+    name = args.strip().lower()
+
+    if name in ("pure white", "pure_white", "white"):
+        name = "pure white"
+
+    if not name:
+        themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
+        print(f"\n  Available themes:")
+        print(f"  ─────────────────────────────────────────────────────")
+        current = current_theme()
+        for t in themes:
+            active = f"{GREEN}*{RESET}" if t == current else " "
+            print(f"  {active} {t}")
+        if current not in themes:
+            print(f"  {GREEN}*{RESET} custom: {current}")
+        print(f"  ─────────────────────────────────────────────────────\n")
+        return
+
+    try:
+        set_theme(args.strip())
+        agent_print(f"Theme set to {GREEN}{current_theme()}{RESET}")
+    except ValueError as e:
+        agent_error(str(e))
+        print("  Available themes: green, red, blue, yellow, pure white, orange, purple, cyan, pink, rainbow\n")
+        print("  Or enter two hex codes for a custom theme (e.g. '/theme #ff0055 #00ffcc')\n")
 
 
 def int_to_words(n: int) -> str:
@@ -667,6 +708,11 @@ def main() -> None:
 
     print_banner(_get_info_lines(ext_text))
 
+    from src.ui import is_session_fresh
+    if current_theme() == "animated_rainbow" and is_session_fresh():
+        from src.ui import start_rainbow_animation
+        start_rainbow_animation()
+
     # Replay transcript on startup if it exists
     active_id = sessions.get_active_session_id()
     session_data = sessions.load_session(active_id)
@@ -729,6 +775,8 @@ def main() -> None:
                         _cmd_streaming(remainder)
                     elif cmd == "complexity":
                         _cmd_complexity(remainder, agent)
+                    elif cmd == "theme":
+                        _cmd_theme(remainder)
                     elif cmd == "onboard":
                         _cmd_onboard(agent)
                     elif cmd == "extension":

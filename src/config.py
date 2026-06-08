@@ -43,6 +43,7 @@ _state: dict = {
     "reasoning": "none",
     "streaming": True,
     "complexity": "full",
+    "theme": "green",
 }
 
 _config: dict = {}
@@ -62,6 +63,49 @@ def set_complexity(value: str) -> None:
         )
     _state["complexity"] = val
     _persist()
+
+
+def current_theme() -> str:
+    """Return the active theme name."""
+    return _state.get("theme", "green")
+
+
+def set_theme(value: str) -> None:
+    """Set and persist the theme."""
+    old_theme = current_theme()
+    val = value.strip().lower()
+    if val in ("pure white", "pure_white", "white"):
+        val = "pure white"
+    if val == "animated_rainbow":
+        raise ValueError("animated_rainbow is currently disabled due to reliability and other bugs")
+    allowed = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"}
+    from src.ui import parse_custom_theme
+    custom = parse_custom_theme(value)
+    if val not in allowed and not custom:
+        raise ValueError(
+            f"Invalid theme '{value}'. Choose from preset ({', '.join(sorted(allowed))}) or enter two hex codes (e.g. '#ff0055 #00ffcc')"
+        )
+    if custom:
+        rgb1, rgb2 = custom
+        h1 = f"#{rgb1[0]:02x}{rgb1[1]:02x}{rgb1[2]:02x}"
+        h2 = f"#{rgb2[0]:02x}{rgb2[1]:02x}{rgb2[2]:02x}"
+        val = f"{h1} {h2}"
+    _state["theme"] = val
+    _persist()
+
+    # Trigger the theme transition animation if the theme actually changed
+    if old_theme != val:
+        try:
+            from src.ui import animate_theme_transition
+            animate_theme_transition(old_theme, val)
+        except Exception:
+            pass
+
+    try:
+        from src import ui
+        ui._prompt_session = None
+    except Exception:
+        pass
 
 
 def current_reasoning() -> str:
@@ -135,6 +179,7 @@ def _persist() -> None:
     current_data["reasoning"] = _state["reasoning"] or "none"
     current_data["streaming"] = current_streaming()
     current_data["complexity"] = current_complexity()
+    current_data["theme"] = current_theme()
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, indent=2)
@@ -149,9 +194,10 @@ def get_all_settings() -> dict:
         "streaming": "on" if current_streaming() else "off",
         "complexity": current_complexity(),
         "ascii_style": get_ascii_style(),
+        "theme": current_theme(),
     }
     for k, v in _config.items():
-        if k not in ("provider", "model", "reasoning", "streaming", "complexity", "ascii_style"):
+        if k not in ("provider", "model", "reasoning", "streaming", "complexity", "ascii_style", "theme"):
             settings[k] = v
     return settings
 
@@ -175,6 +221,8 @@ def set_config_value(key: str, value: str) -> None:
             raise ValueError("Invalid streaming value. Use 'on' or 'off'.")
     elif key_lower == "complexity":
         set_complexity(value)
+    elif key_lower == "theme":
+        set_theme(value)
     elif key_lower == "ascii_style":
         val = value.strip().lower()
         allowed = {"default", "legacy", "experimental"}
@@ -208,6 +256,8 @@ def reset_config_value(key: str) -> None:
         set_streaming(True)
     elif key_lower == "complexity":
         set_complexity("full")
+    elif key_lower == "theme":
+        set_theme("green")
     elif key_lower == "ascii_style":
         if "ascii_style" in _config:
             del _config["ascii_style"]
@@ -261,8 +311,13 @@ def randomize_config_value(key: str) -> str:
         _config["ascii_style"] = val
         _persist()
         return val
+    elif key_lower == "theme":
+        themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
+        val = random.choice(themes)
+        set_theme(val)
+        return val
     else:
-        raise ValueError(f"Cannot randomize custom setting '{key}'. Supported settings: provider, model, reasoning, streaming, ascii_style")
+        raise ValueError(f"Cannot randomize custom setting '{key}'. Supported settings: provider, model, reasoning, streaming, ascii_style, theme")
 
 
 def apply_session_settings(provider: str, model: str, reasoning: str) -> None:
@@ -467,6 +522,7 @@ def ensure_env() -> tuple[str, str]:
     saved_reasoning = _config.get("reasoning", "none").strip().lower()
     saved_streaming = _config.get("streaming")
     saved_complexity = _config.get("complexity", "full").strip().lower()
+    saved_theme = _config.get("theme", "green").strip().lower()
 
     if saved_provider and saved_provider in PROVIDERS:
         _state["provider"] = saved_provider
@@ -482,6 +538,14 @@ def ensure_env() -> tuple[str, str]:
         _state["complexity"] = saved_complexity
     else:
         _state["complexity"] = "full"
+    allowed_themes = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"}
+    from src.ui import parse_custom_theme
+    if saved_theme == "animated_rainbow":
+        _state["theme"] = "green"
+    elif saved_theme in allowed_themes or parse_custom_theme(saved_theme):
+        _state["theme"] = saved_theme
+    else:
+        _state["theme"] = "green"
 
     # Find the best available provider
     available = configured_providers()

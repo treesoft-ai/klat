@@ -4,9 +4,325 @@ Only one accent color: deep green.
 """
 
 import sys
+import threading
+import time
+import colorsys
 
 # Deep green — the only accent color in Klat
-GREEN = "\033[38;2;0;180;80m"
+THEME_CONFIG = {
+    "green": {
+        "accent": "\033[38;2;0;180;80m",
+        "hex": "#00b450",
+        "start": (0, 180, 80),
+        "end": (2, 219, 99)
+    },
+    "red": {
+        "accent": "\033[38;2;220;0;50m",
+        "hex": "#dc0032",
+        "start": (220, 0, 50),
+        "end": (255, 60, 100)
+    },
+    "blue": {
+        "accent": "\033[38;2;0;102;204m",
+        "hex": "#0066cc",
+        "start": (0, 102, 204),
+        "end": (0, 204, 255)
+    },
+    "yellow": {
+        "accent": "\033[38;2;240;160;0m",
+        "hex": "#f0a000",
+        "start": (240, 160, 0),
+        "end": (255, 240, 0)
+    },
+    "pure white": {
+        "accent": "\033[38;2;255;255;255m",
+        "hex": "#ffffff",
+        "start": (200, 200, 200),
+        "end": (255, 255, 255)
+    },
+    "orange": {
+        "accent": "\033[38;2;255;68;0m",
+        "hex": "#ff4400",
+        "start": (255, 68, 0),
+        "end": (255, 153, 0)
+    },
+    "purple": {
+        "accent": "\033[38;2;138;43;226m",
+        "hex": "#8a2be2",
+        "start": (138, 43, 226),
+        "end": (218, 112, 214)
+    },
+    "cyan": {
+        "accent": "\033[38;2;0;150;150m",
+        "hex": "#009696",
+        "start": (0, 150, 150),
+        "end": (0, 255, 255)
+    },
+    "pink": {
+        "accent": "\033[38;2;255;20;147m",
+        "hex": "#ff1493",
+        "start": (255, 20, 147),
+        "end": (255, 105, 180)
+    },
+    "rainbow": {
+        "accent": "\033[38;2;0;229;163m",
+        "hex": "#00e5a3",
+        "start": (0, 229, 163),
+        "end": (0, 255, 204)
+    },
+    "animated_rainbow": {
+        "accent": "\033[38;2;0;229;163m",
+        "hex": "#00e5a3",
+        "start": (0, 229, 163),
+        "end": (0, 255, 204)
+    }
+}
+
+
+_rainbow_phase: float = 0.0
+_rainbow_thread_active: bool = False
+_rainbow_thread_lock: threading.Lock = threading.Lock()
+
+
+def redraw_animated_banner() -> None:
+    """Redraws only the banner (logo + info lines) using the current rainbow phase."""
+    import sys
+    import re
+
+    # Save cursor position and hide cursor
+    sys.stdout.write("\033[?25l\033[s")
+    
+    try:
+        # Move to Row 2, Column 1 (absolute top of the banner)
+        sys.stdout.write("\033[2;1H")
+        
+        try:
+            from src.config import get_ascii_style
+            style = get_ascii_style()
+        except Exception:
+            style = "default"
+
+        if style == "legacy":
+            logo_lines = _LEGACY_LOGO
+        elif style == "experimental":
+            logo_lines = _EXPERIMENTAL_LOGO
+        else:
+            logo_lines = _DEFAULT_LOGO
+
+        logo_w = max(len(l) for l in logo_lines)
+        sep = f"  {DIM}\u2502{RESET}  "
+        
+        # Re-colorize the saved info lines
+        current_info: list[str] = []
+        for line in _last_info_lines:
+            stripped = re.sub(r'\033\[[0-9;]*[a-zA-Z]', '', line)
+            parts = re.split(r'\s{2,}', stripped, maxsplit=1)
+            if len(parts) == 2:
+                lbl, val = parts[0], parts[1]
+                padded_lbl = lbl.ljust(12)
+                current_info.append(f"{DIM}{padded_lbl}{RESET}{colorize_gradient(val)}")
+            else:
+                current_info.append(line)
+        
+        rows = max(len(logo_lines), len(current_info))
+        
+        # Move down 1 line relatively (skipping the blank line at Row 2, which remains blank)
+        sys.stdout.write("\033[K\033[1B\r")
+        for i in range(rows):
+            raw = logo_lines[i] if i < len(logo_lines) else ""
+            info = current_info[i] if i < len(current_info) else ""
+            try:
+                from src.config import current_theme
+                theme = current_theme()
+            except Exception:
+                theme = "green"
+            logo = colorize_logo_line(raw.ljust(logo_w), i, theme)
+            sys.stdout.write(f"\033[K{logo}{sep}{info}\033[1B\r")
+        
+        # Overwrite trailing blank line
+        sys.stdout.write("\033[K")
+    finally:
+        # Restore cursor position and visibility
+        sys.stdout.write("\033[u\033[?25h")
+        sys.stdout.flush()
+
+
+def schedule_banner_redraw() -> None:
+    """Schedule redraw_animated_banner on the prompt_toolkit event loop if running."""
+    try:
+        from prompt_toolkit.application import get_app
+        app = get_app()
+        if app and app.is_running and app.loop:
+            app.loop.call_soon_threadsafe(redraw_animated_banner)
+            return
+    except Exception:
+        pass
+    
+    try:
+        redraw_animated_banner()
+    except (IOError, OSError):
+        pass
+
+
+def _rainbow_animation_loop() -> None:
+    """Daemon thread loop that updates the rainbow phase and schedules/performs banner redraw."""
+    global _rainbow_phase
+    while True:
+        with _rainbow_thread_lock:
+            if not _rainbow_thread_active:
+                break
+        
+        if not is_session_fresh():
+            stop_rainbow_animation()
+            break
+            
+        _rainbow_phase = (_rainbow_phase + 0.02) % 1.0
+        schedule_banner_redraw()
+        time.sleep(0.06)
+
+
+def start_rainbow_animation() -> None:
+    """Start the background rainbow animation thread if not already running."""
+    global _rainbow_thread_active
+    with _rainbow_thread_lock:
+        if _rainbow_thread_active:
+            return
+        _rainbow_thread_active = True
+    
+    t = threading.Thread(target=_rainbow_animation_loop, daemon=True)
+    t.start()
+
+
+def stop_rainbow_animation() -> None:
+    """Stop the background rainbow animation thread."""
+    global _rainbow_thread_active
+    with _rainbow_thread_lock:
+        _rainbow_thread_active = False
+
+
+def parse_hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
+    """Helper to convert a hexadecimal color string to an RGB tuple."""
+    hex_str = hex_str.lstrip('#')
+    return int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
+
+
+def parse_custom_theme(theme_str: str) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
+    """Check if the string contains two hex codes and return their RGB values."""
+    import re
+    parts = re.split(r'[\s,]+', theme_str.strip())
+    if len(parts) == 2:
+        hex1, hex2 = parts[0], parts[1]
+        pattern = re.compile(r'^#?[0-9a-fA-F]{6}$')
+        if pattern.match(hex1) and pattern.match(hex2):
+            try:
+                rgb1 = parse_hex_to_rgb(hex1)
+                rgb2 = parse_hex_to_rgb(hex2)
+                return rgb1, rgb2
+            except Exception:
+                pass
+    return None
+
+
+def get_theme_config(theme: str) -> dict:
+    """Get theme configuration, dynamically creating one for custom hex themes if needed."""
+    theme_lower = theme.strip().lower()
+    if theme_lower in THEME_CONFIG:
+        return THEME_CONFIG[theme_lower]
+
+    custom = parse_custom_theme(theme)
+    if custom:
+        rgb1, rgb2 = custom
+        h1 = f"#{rgb1[0]:02x}{rgb1[1]:02x}{rgb1[2]:02x}"
+        accent = f"\033[38;2;{rgb1[0]};{rgb1[1]};{rgb1[2]}m"
+        return {
+            "accent": accent,
+            "hex": h1,
+            "start": rgb1,
+            "end": rgb2
+        }
+    return THEME_CONFIG["green"]
+
+
+class DynamicThemeColor(str):
+    """Dynamically resolves to the active theme's accent color."""
+
+    def __new__(cls) -> "DynamicThemeColor":
+        return str.__new__(cls, "")
+
+    @property
+    def _val(self) -> str:
+        try:
+            from src.config import current_theme
+            theme = current_theme()
+        except Exception:
+            theme = "green"
+        config = get_theme_config(theme)
+        return config["accent"]
+
+    def __str__(self) -> str:
+        return self._val
+
+    def __repr__(self) -> str:
+        return repr(self._val)
+
+    def __format__(self, format_spec: str) -> str:
+        return self._val.__format__(format_spec)
+
+    def __add__(self, other: str) -> str:
+        return self._val + other
+
+    def __radd__(self, other: str) -> str:
+        return other + self._val
+
+    def __eq__(self, other: object) -> bool:
+        return self._val == other
+
+    def __hash__(self) -> int:
+        return hash(self._val)
+
+    def __len__(self) -> int:
+        return len(self._val)
+
+
+class DynamicLogoColors:
+    """Dynamically generates the 6 line gradient colors for the logo."""
+
+    def __getitem__(self, index: int) -> str:
+        try:
+            from src.config import current_theme
+            theme = current_theme()
+        except Exception:
+            theme = "green"
+
+        if theme == "rainbow":
+            h_cycle = abs((index / 6.0) * 2 - 1) * 0.55 + 0.15
+            r, g, b = colorsys.hsv_to_rgb(h_cycle, 0.9, 0.95)
+            return f"\033[38;2;{int(r * 255)};{int(g * 255)};{int(b * 255)}m"
+        elif theme == "animated_rainbow":
+            h_cycle = abs(((index / 6.0 + _rainbow_phase) % 1.0) * 2 - 1) * 0.55 + 0.15
+            r, g, b = colorsys.hsv_to_rgb(h_cycle, 0.9, 0.95)
+            return f"\033[38;2;{int(r * 255)};{int(g * 255)};{int(b * 255)}m"
+
+        config = get_theme_config(theme)
+        start = config["start"]
+        end = config["end"]
+        # Interpolate between start and end RGB coordinates over 6 steps (0 to 5)
+        r = int(start[0] + (end[0] - start[0]) * index / 5)
+        g = int(start[1] + (end[1] - start[1]) * index / 5)
+        b = int(start[2] + (end[2] - start[2]) * index / 5)
+        return f"\033[38;2;{r};{g};{b}m"
+
+    def __len__(self) -> int:
+        return 6
+
+
+def get_theme_hex(theme: str) -> str:
+    """Return the hexadecimal accent color representation for prompt_toolkit styles."""
+    config = get_theme_config(theme)
+    return config["hex"]
+
+
+GREEN = DynamicThemeColor()
 RESET = "\033[0m"
 DIM   = "\033[2m"
 
@@ -14,18 +330,50 @@ BANNER_SUBTITLE = "swe agent"
 
 
 def colorize_gradient(text: str) -> str:
-    """Applies a smooth green gradient (from #00b450 to #02db63) left-to-right to the text."""
+    """Applies a smooth theme gradient left-to-right to the text."""
     if not text:
         return ""
+    try:
+        from src.config import current_theme
+        theme = current_theme()
+    except Exception:
+        theme = "green"
+
     n = len(text)
+    if theme == "rainbow":
+        if n == 1:
+            return f"\033[38;2;0;229;163m{text}\033[0m"
+        parts = []
+        for j, c in enumerate(text):
+            h_cycle = abs((float(j) / max(1, n - 1)) * 2 - 1) * 0.55 + 0.15
+            r, g, b = colorsys.hsv_to_rgb(h_cycle, 0.9, 0.95)
+            parts.append(f"\033[38;2;{int(r * 255)};{int(g * 255)};{int(b * 255)}m{c}")
+        parts.append("\033[0m")
+        return "".join(parts)
+    elif theme == "animated_rainbow":
+        if n == 1:
+            return f"\033[38;2;0;229;163m{text}\033[0m"
+        parts = []
+        for j, c in enumerate(text):
+            h = (float(j) / max(1, n - 1) + _rainbow_phase) % 1.0
+            h_cycle = abs(h * 2 - 1) * 0.55 + 0.15
+            r, g, b = colorsys.hsv_to_rgb(h_cycle, 0.9, 0.95)
+            parts.append(f"\033[38;2;{int(r * 255)};{int(g * 255)};{int(b * 255)}m{c}")
+        parts.append("\033[0m")
+        return "".join(parts)
+
+    config = get_theme_config(theme)
+    start = config["start"]
+    end = config["end"]
+
     if n == 1:
-        return f"\033[38;2;0;180;80m{text}\033[0m"
-    
+        return f"{config['accent']}{text}\033[0m"
+
     parts = []
     for j, c in enumerate(text):
-        r = int(0 + 2 * j / (n - 1))
-        g = int(180 + 39 * j / (n - 1))
-        b = int(80 + 19 * j / (n - 1))
+        r = int(start[0] + (end[0] - start[0]) * j / (n - 1))
+        g = int(start[1] + (end[1] - start[1]) * j / (n - 1))
+        b = int(start[2] + (end[2] - start[2]) * j / (n - 1))
         parts.append(f"\033[38;2;{r};{g};{b}m{c}")
     parts.append("\033[0m")
     return "".join(parts)
@@ -58,18 +406,47 @@ _EXPERIMENTAL_LOGO = [
     "                                          ",
 ]
 
-_LOGO_COLORS = [
-    "\033[38;2;0;180;80m",
-    "\033[38;2;0;188;84m",
-    "\033[38;2;1;196;88m",
-    "\033[38;2;1;203;91m",
-    "\033[38;2;2;211;95m",
-    "\033[38;2;2;219;99m",
-]
+_LOGO_COLORS = DynamicLogoColors()
+
+
+def is_session_fresh() -> bool:
+    """Return True if no user input or replies have occurred in the current session."""
+    try:
+        from src import sessions
+        transcript = sessions.get_transcript()
+        return len([e for e in transcript if e.get('type') in ('user', 'reply')]) == 0
+    except Exception:
+        return True
+
+
+def colorize_logo_line(text: str, row: int, theme: str) -> str:
+    """Applies logo-specific coloring depending on the theme."""
+    if not text:
+        return ""
+    if theme not in ("rainbow", "animated_rainbow"):
+        color = _LOGO_COLORS[row] if row < len(_LOGO_COLORS) else GREEN
+        return f"{color}{text}{RESET}"
+
+    parts = []
+    phase = _rainbow_phase if theme == "animated_rainbow" else 0.0
+    for col, c in enumerate(text):
+        if c.isspace():
+            parts.append(c)
+        else:
+            h_cycle = abs(((col / 15.0 + row / 5.0 + phase) % 1.0) * 2 - 1) * 0.55 + 0.15
+            r, g, b = colorsys.hsv_to_rgb(h_cycle, 0.9, 0.95)
+            parts.append(f"\033[38;2;{int(r * 255)};{int(g * 255)};{int(b * 255)}m{c}")
+    return "".join(parts) + RESET
+
+
+_last_info_lines = []
 
 
 def print_banner(info_lines: list[str] = ()) -> None:
     """Print the ASCII logo with optional info lines shown to its right."""
+    global _last_info_lines
+    if info_lines:
+        _last_info_lines = list(info_lines)
     try:
         from src.config import get_ascii_style
         style = get_ascii_style()
@@ -91,8 +468,12 @@ def print_banner(info_lines: list[str] = ()) -> None:
     for i in range(rows):
         raw   = logo_lines[i] if i < len(logo_lines) else ""
         info  = info_lines[i]  if i < len(info_lines)  else ""
-        color = _LOGO_COLORS[i] if i < len(_LOGO_COLORS) else GREEN
-        logo  = f"{color}{raw.ljust(logo_w)}{RESET}"
+        try:
+            from src.config import current_theme
+            theme = current_theme()
+        except Exception:
+            theme = "green"
+        logo = colorize_logo_line(raw.ljust(logo_w), i, theme)
         print(f"{logo}{sep}{info}")
     print()
 
@@ -124,6 +505,7 @@ if HAS_PROMPT_TOOLKIT:
                 "/reasoning",
                 "/streaming",
                 "/complexity",
+                "/theme",
                 "/setting set",
                 "/setting reset",
                 "/setting random",
@@ -149,6 +531,15 @@ if HAS_PROMPT_TOOLKIT:
             if not text.startswith("/"):
                 return self.history_suggest.get_suggestion(buffer, document)
 
+            # Smart completion for /theme
+            if text.startswith("/theme "):
+                arg = text[len("/theme "):]
+                themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
+                for t in themes:
+                    if t.startswith(arg) and t != arg:
+                        return Suggestion(t[len(arg):])
+                return None
+
             # Smart completion for /setting set
             if text.startswith("/setting set "):
                 arg = text[len("/setting set "):]
@@ -165,6 +556,8 @@ if HAS_PROMPT_TOOLKIT:
                         candidates = ["on", "off"]
                     elif key == "complexity":
                         candidates = ["nano", "essential", "full"]
+                    elif key == "theme":
+                        candidates = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
                     elif key == "provider":
                         try:
                             from src.config import configured_providers
@@ -179,7 +572,7 @@ if HAS_PROMPT_TOOLKIT:
                         from src.config import get_all_settings
                         keys = sorted(get_all_settings().keys())
                     except Exception:
-                        keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming"]
+                        keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme"]
                     for k in keys:
                         if k.startswith(arg) and k != arg:
                             return Suggestion(k[len(arg):])
@@ -192,7 +585,7 @@ if HAS_PROMPT_TOOLKIT:
                     from src.config import get_all_settings
                     keys = sorted(get_all_settings().keys())
                 except Exception:
-                    keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming"]
+                    keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme"]
                 for k in keys:
                     if k.startswith(arg) and k != arg:
                         return Suggestion(k[len(arg):])
@@ -201,7 +594,7 @@ if HAS_PROMPT_TOOLKIT:
             # Smart completion for /setting random
             if text.startswith("/setting random "):
                 arg = text[len("/setting random "):]
-                keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming"]
+                keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme"]
                 for k in keys:
                     if k.startswith(arg) and k != arg:
                         return Suggestion(k[len(arg):])
@@ -381,10 +774,17 @@ if HAS_PROMPT_TOOLKIT:
     def get_prompt_session():
         global _prompt_session
         if _prompt_session is None:
+            try:
+                from src.config import current_theme
+                theme = current_theme()
+            except Exception:
+                theme = "green"
+            theme_hex = get_theme_hex(theme)
+
             style = Style.from_dict({
                 'completion-menu': 'bg:default fg:default',
                 'completion-menu.completion': 'fg:#888888 bg:default',
-                'completion-menu.completion.current': 'fg:#00b450 bg:default bold',
+                'completion-menu.completion.current': f'fg:{theme_hex} bg:default bold',
                 'scrollbar': 'bg:default fg:default',
                 'scrollbar.background': 'bg:default fg:default',
                 'scrollbar.button': 'bg:default fg:default',
@@ -657,3 +1057,85 @@ def print_session_summary() -> None:
         print(f"  {DIM}─────────────────────────────────────────────────────{RESET}\n")
     except Exception:
         pass
+
+
+def animate_theme_transition(old_theme: str, new_theme: str) -> None:
+    """Instantly update the colors of the banner and the command prompt prefix to the new theme."""
+    if old_theme == "animated_rainbow":
+        stop_rainbow_animation()
+
+    import sys
+    import re
+
+    # Hide cursor
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+    
+    try:
+        # Save cursor position
+        sys.stdout.write("\033[s")
+        
+        fresh = is_session_fresh()
+        if fresh:
+            # Move to Row 2, Column 1 (absolute top of the banner)
+            sys.stdout.write("\033[2;1H")
+            
+            # Redraw banner with the new color config
+            try:
+                from src.config import get_ascii_style
+                style = get_ascii_style()
+            except Exception:
+                style = "default"
+
+            if style == "legacy":
+                logo_lines = _LEGACY_LOGO
+            elif style == "experimental":
+                logo_lines = _EXPERIMENTAL_LOGO
+            else:
+                logo_lines = _DEFAULT_LOGO
+
+            logo_w = max(len(l) for l in logo_lines)
+            sep = f"  {DIM}\u2502{RESET}  "
+            
+            # Re-colorize the saved info lines
+            current_info = []
+            for line in _last_info_lines:
+                stripped = re.sub(r'\033\[[0-9;]*[a-zA-Z]', '', line)
+                parts = re.split(r'\s{2,}', stripped, maxsplit=1)
+                if len(parts) == 2:
+                    lbl, val = parts[0], parts[1]
+                    padded_lbl = lbl.ljust(12)
+                    current_info.append(f"{DIM}{padded_lbl}{RESET}{colorize_gradient(val)}")
+                else:
+                    current_info.append(line)
+            
+            rows = max(len(logo_lines), len(current_info))
+            
+            # Overwrite leading blank line and move down 1 line relatively
+            sys.stdout.write("\033[K\033[1B\r")
+            for i in range(rows):
+                raw = logo_lines[i] if i < len(logo_lines) else ""
+                info = current_info[i] if i < len(current_info) else ""
+                logo = colorize_logo_line(raw.ljust(logo_w), i, new_theme)
+                sys.stdout.write(f"\033[K{logo}{sep}{info}\033[1B\r")
+            
+            # Overwrite trailing blank line
+            sys.stdout.write("\033[K")
+            
+            # Restore cursor
+            sys.stdout.write("\033[u")
+        
+        # Update command prompt prefix `>` on the line above
+        sys.stdout.write("\033[1A\r")
+        sys.stdout.write(f"{GREEN}>{RESET}")
+        
+        # Restore cursor to original position
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+    finally:
+        # Restore cursor visibility
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+
+    if new_theme == "animated_rainbow" and fresh:
+        start_rainbow_animation()
