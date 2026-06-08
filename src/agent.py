@@ -560,7 +560,7 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
                     accumulated_thoughts.append(p.text)
                     if current_streaming():
                         if not printed_thought_prefix:
-                            print(f"  {ui.DIM}⌁ thinking...{ui.RESET}")
+                            print(f"  {ui.DIM}⌁ {ui.thinking_label()}{ui.RESET}")
                             print(f"    {ui.DIM}\033[3m", end="", flush=True)
                             printed_thought_prefix = True
                         formatted_chunk = p.text.replace("\n", f"\n    {ui.DIM}\033[3m")
@@ -771,7 +771,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                 accumulated_reasoning += reasoning_chunk
                 if current_streaming():
                     if not printed_thought_prefix:
-                        print(f"  {ui.DIM}⌁ thinking...{ui.RESET}")
+                        print(f"  {ui.DIM}⌁ {ui.thinking_label()}{ui.RESET}")
                         print(f"    {ui.DIM}\033[3m", end="", flush=True)
                         printed_thought_prefix = True
                     formatted_chunk = reasoning_chunk.replace("\n", f"\n    {ui.DIM}\033[3m")
@@ -834,7 +834,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                         accumulated_reasoning += char
                         if current_streaming():
                             if not printed_thought_prefix:
-                                print(f"  {ui.DIM}⌁ thinking...{ui.RESET}")
+                                print(f"  {ui.DIM}⌁ {ui.thinking_label()}{ui.RESET}")
                                 print(f"    {ui.DIM}\033[3m", end="", flush=True)
                                 printed_thought_prefix = True
 

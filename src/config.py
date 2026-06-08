@@ -44,6 +44,7 @@ _state: dict = {
     "streaming": True,
     "complexity": "full",
     "theme": "green",
+    "ui_mode": "simple",
 }
 
 _config: dict = {}
@@ -63,6 +64,28 @@ def set_complexity(value: str) -> None:
         )
     _state["complexity"] = val
     _persist()
+
+
+def current_ui_mode() -> str:
+    """Return the active UI mode: 'simple' or 'professional'."""
+    return _state.get("ui_mode", "simple")
+
+
+def set_ui_mode(value: str) -> None:
+    """Set and persist the UI mode."""
+    old_mode = current_ui_mode()
+    val = value.strip().lower()
+    if val not in ("simple", "professional"):
+        raise ValueError("Invalid UI mode. Choose from: simple, professional")
+    _state["ui_mode"] = val
+    _persist()
+
+    if old_mode != val:
+        try:
+            from src.ui import animate_ui_mode_transition
+            animate_ui_mode_transition(old_mode, val)
+        except Exception:
+            pass
 
 
 def current_theme() -> str:
@@ -180,6 +203,7 @@ def _persist() -> None:
     current_data["streaming"] = current_streaming()
     current_data["complexity"] = current_complexity()
     current_data["theme"] = current_theme()
+    current_data["ui_mode"] = current_ui_mode()
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, indent=2)
@@ -195,9 +219,10 @@ def get_all_settings() -> dict:
         "complexity": current_complexity(),
         "ascii_style": get_ascii_style(),
         "theme": current_theme(),
+        "ui_mode": current_ui_mode(),
     }
     for k, v in _config.items():
-        if k not in ("provider", "model", "reasoning", "streaming", "complexity", "ascii_style", "theme"):
+        if k not in ("provider", "model", "reasoning", "streaming", "complexity", "ascii_style", "theme", "ui_mode"):
             settings[k] = v
     return settings
 
@@ -221,6 +246,8 @@ def set_config_value(key: str, value: str) -> None:
             raise ValueError("Invalid streaming value. Use 'on' or 'off'.")
     elif key_lower == "complexity":
         set_complexity(value)
+    elif key_lower == "ui_mode":
+        set_ui_mode(value)
     elif key_lower == "theme":
         set_theme(value)
     elif key_lower == "ascii_style":
@@ -256,6 +283,8 @@ def reset_config_value(key: str) -> None:
         set_streaming(True)
     elif key_lower == "complexity":
         set_complexity("full")
+    elif key_lower == "ui_mode":
+        set_ui_mode("simple")
     elif key_lower == "theme":
         set_theme("green")
     elif key_lower == "ascii_style":
@@ -316,8 +345,12 @@ def randomize_config_value(key: str) -> str:
         val = random.choice(themes)
         set_theme(val)
         return val
+    elif key_lower == "ui_mode":
+        val = random.choice(["simple", "professional"])
+        set_ui_mode(val)
+        return val
     else:
-        raise ValueError(f"Cannot randomize custom setting '{key}'. Supported settings: provider, model, reasoning, streaming, ascii_style, theme")
+        raise ValueError(f"Cannot randomize custom setting '{key}'. Supported settings: provider, model, reasoning, streaming, ascii_style, theme, ui_mode")
 
 
 def apply_session_settings(provider: str, model: str, reasoning: str) -> None:
@@ -523,6 +556,7 @@ def ensure_env() -> tuple[str, str]:
     saved_streaming = _config.get("streaming")
     saved_complexity = _config.get("complexity", "full").strip().lower()
     saved_theme = _config.get("theme", "green").strip().lower()
+    saved_ui_mode = _config.get("ui_mode", "simple").strip().lower()
 
     if saved_provider and saved_provider in PROVIDERS:
         _state["provider"] = saved_provider
@@ -538,6 +572,10 @@ def ensure_env() -> tuple[str, str]:
         _state["complexity"] = saved_complexity
     else:
         _state["complexity"] = "full"
+    if saved_ui_mode in ("simple", "professional"):
+        _state["ui_mode"] = saved_ui_mode
+    else:
+        _state["ui_mode"] = "simple"
     allowed_themes = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"}
     from src.ui import parse_custom_theme
     if saved_theme == "animated_rainbow":

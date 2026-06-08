@@ -535,6 +535,7 @@ if HAS_PROMPT_TOOLKIT:
                 "/reasoning",
                 "/streaming",
                 "/complexity",
+                "/ui",
                 "/theme",
                 "/setting set",
                 "/setting reset",
@@ -586,6 +587,8 @@ if HAS_PROMPT_TOOLKIT:
                         candidates = ["on", "off"]
                     elif key == "complexity":
                         candidates = ["nano", "essential", "full"]
+                    elif key == "ui_mode":
+                        candidates = ["simple", "professional"]
                     elif key == "theme":
                         candidates = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"]
                     elif key == "provider":
@@ -602,7 +605,7 @@ if HAS_PROMPT_TOOLKIT:
                         from src.config import get_all_settings
                         keys = sorted(get_all_settings().keys())
                     except Exception:
-                        keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme"]
+                        keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme", "ui_mode"]
                     for k in keys:
                         if k.startswith(arg) and k != arg:
                             return Suggestion(k[len(arg):])
@@ -615,7 +618,7 @@ if HAS_PROMPT_TOOLKIT:
                     from src.config import get_all_settings
                     keys = sorted(get_all_settings().keys())
                 except Exception:
-                    keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme"]
+                    keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme", "ui_mode"]
                 for k in keys:
                     if k.startswith(arg) and k != arg:
                         return Suggestion(k[len(arg):])
@@ -624,7 +627,7 @@ if HAS_PROMPT_TOOLKIT:
             # Smart completion for /setting random
             if text.startswith("/setting random "):
                 arg = text[len("/setting random "):]
-                keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme"]
+                keys = ["ascii_style", "complexity", "model", "provider", "reasoning", "streaming", "theme", "ui_mode"]
                 for k in keys:
                     if k.startswith(arg) and k != arg:
                         return Suggestion(k[len(arg):])
@@ -659,6 +662,15 @@ if HAS_PROMPT_TOOLKIT:
                 for lvl in levels:
                     if lvl.startswith(arg) and lvl != arg:
                         return Suggestion(lvl[len(arg):])
+                return None
+
+            # Smart completion for /ui
+            if text.startswith("/ui "):
+                arg = text[len("/ui "):]
+                modes = ["simple", "professional"]
+                for m in modes:
+                    if m.startswith(arg) and m != arg:
+                        return Suggestion(m[len(arg):])
                 return None
 
             # Smart completion for /streaming
@@ -946,11 +958,22 @@ def agent_print(text: str) -> None:
 
 
 
+def thinking_label() -> str:
+    """Return 'thinking...' or 'Thinking...' based on current UI mode."""
+    try:
+        from src.config import current_ui_mode
+        if current_ui_mode() == "professional":
+            return "Thinking..."
+    except Exception:
+        pass
+    return "thinking..."
+
+
 def agent_thought(text: str) -> None:
     """Print agent internal thought/reasoning in a dim, italic style."""
     if not text.strip():
         return
-    print(f"  {DIM}⌁ thinking...{RESET}")
+    print(f"  {DIM}⌁ {thinking_label()}{RESET}")
     for line in text.strip().split("\n"):
         print(f"    {DIM}\033[3m{line}{RESET}")
     try:
@@ -966,7 +989,13 @@ def agent_step(action: str, detail: str = "") -> None:
     import sys
     import shutil
 
-    # The full visible line is: "  → " + action + "  " + detail
+    from src.config import current_ui_mode
+    if current_ui_mode() == "professional":
+        action_formatted = action.replace("_", " ").replace("-", " ").title()
+    else:
+        action_formatted = action
+
+    # The full visible line is: "  → " + action_formatted + "  " + detail
     # We animate the entire thing from character 0 so the line types itself in
     # from a dead start — indent, arrow, and all.
     PREFIX = "  → "           # 4 visible chars
@@ -982,11 +1011,11 @@ def agent_step(action: str, detail: str = "") -> None:
     max_content = max(cols - PREFIX_VISUAL - 1, 10)
 
     detail_part = f"  {detail}" if detail else ""
-    raw_content = action + detail_part
+    raw_content = action_formatted + detail_part
     if len(raw_content) > max_content:
         raw_content = raw_content[:max_content - 1] + "…"
 
-    action_clamped = raw_content[:len(action)] if len(raw_content) >= len(action) else raw_content
+    action_clamped = raw_content[:len(action_formatted)] if len(raw_content) >= len(action_formatted) else raw_content
     detail_clamped = raw_content[len(action_clamped):]
 
     # Full flat string animated character-by-character from column 0:
@@ -1056,7 +1085,9 @@ def agent_step(action: str, detail: str = "") -> None:
 
 
 def agent_done() -> None:
-    print(f"\n{GREEN}✓{RESET} done\n")
+    from src.config import current_ui_mode
+    done_label = "Done" if current_ui_mode() == "professional" else "done"
+    print(f"\n{GREEN}✓{RESET} {done_label}\n")
 
 
 def agent_error(msg: str) -> None:
@@ -1072,6 +1103,7 @@ def print_session_summary() -> None:
     """Print the session token usage summary."""
     try:
         from src import sessions
+        from src.config import current_ui_mode
         usage = sessions.get_token_usage()
         inp = usage.get("input", 0)
         out = usage.get("output", 0)
@@ -1079,11 +1111,19 @@ def print_session_summary() -> None:
         if total == 0:
             return
         
-        print(f"  {GREEN}session summary{RESET}")
+        ui_m = current_ui_mode()
+        if ui_m == "professional":
+            header = "Session Summary"
+            labels = ["Input", "Output", "Total"]
+        else:
+            header = "session summary"
+            labels = ["input", "output", "total"]
+
+        print(f"  {GREEN}{header}{RESET}")
         print(f"  {DIM}─────────────────────────────────────────────────────{RESET}")
-        print(f"    input  : {GREEN}{inp:,}{RESET}")
-        print(f"    output : {GREEN}{out:,}{RESET}")
-        print(f"    total  : {GREEN}{total:,}{RESET}")
+        print(f"    {labels[0]:<7}: {GREEN}{inp:,}{RESET}")
+        print(f"    {labels[1]:<7}: {GREEN}{out:,}{RESET}")
+        print(f"    {labels[2]:<7}: {GREEN}{total:,}{RESET}")
         print(f"  {DIM}─────────────────────────────────────────────────────{RESET}\n")
     except Exception:
         pass
@@ -1169,3 +1209,120 @@ def animate_theme_transition(old_theme: str, new_theme: str) -> None:
 
     if new_theme == "animated_rainbow" and fresh:
         start_rainbow_animation()
+
+
+def _build_info_lines_for_mode(ui_mode: str) -> list[str]:
+    from src.config import current_provider, current_model, current_reasoning
+    from src.extensions import list_extensions
+    
+    # Count enabled extensions
+    try:
+        ext_count = len([e for e in list_extensions() if e.get("enabled", True)])
+    except Exception:
+        ext_count = 0
+        
+    # simple int_to_words mapping for common numbers
+    ones = ["none", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", 
+            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", 
+            "seventeen", "eighteen", "nineteen"]
+    ext_text = ones[ext_count] if ext_count < len(ones) else str(ext_count)
+    
+    from src import sessions
+    active_id = sessions.get_active_session_id()
+    is_fresh = len([e for e in sessions.get_transcript() if e.get('type') in ('user', 'reply')]) == 0
+    
+    if ui_mode == "professional":
+        subtitle = "SWE Agent"
+        labels = ["Extensions", "Session", "Provider", "Model", "Reasoning"]
+        session_val = "Fresh" if is_fresh else active_id
+        prov_val = current_provider().title()
+        model_val = current_model()
+        reasoning_val = current_reasoning().capitalize()
+    else:
+        subtitle = "swe agent"
+        labels = ["extensions", "session", "provider", "model", "reasoning"]
+        session_val = "fresh" if is_fresh else active_id
+        prov_val = current_provider()
+        model_val = current_model()
+        reasoning_val = current_reasoning()
+        
+    return [
+        f"{DIM}{subtitle}{RESET}   {colorize_gradient('TreeSoft')}",
+        f"{DIM}{labels[0].ljust(10)}{RESET}  {colorize_gradient(ext_text)}",
+        f"{DIM}{labels[1].ljust(10)}{RESET}  {colorize_gradient(session_val)}",
+        f"{DIM}{labels[2].ljust(10)}{RESET}  {colorize_gradient(prov_val)}",
+        f"{DIM}{labels[3].ljust(10)}{RESET}  {colorize_gradient(model_val)}",
+        f"{DIM}{labels[4].ljust(10)}{RESET}  {colorize_gradient(reasoning_val)}",
+    ]
+
+
+def animate_ui_mode_transition(old_mode: str, new_mode: str) -> None:
+    """Instantly update the capitalisations of the banner labels and prefix."""
+    import sys
+    global _last_info_lines
+    
+    # Generate new info lines for the new mode and update the cache
+    _last_info_lines = _build_info_lines_for_mode(new_mode)
+    
+    # Hide cursor
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+    
+    try:
+        # Save cursor position
+        sys.stdout.write("\033[s")
+        
+        fresh = is_session_fresh()
+        if fresh:
+            # Move to Row 2, Column 1 (absolute top of the banner)
+            sys.stdout.write("\033[2;1H")
+            
+            # Redraw banner with the new UI mode settings
+            try:
+                from src.config import get_ascii_style
+                style = get_ascii_style()
+            except Exception:
+                style = "default"
+                
+            if style == "legacy":
+                logo_lines = _LEGACY_LOGO
+            elif style == "experimental":
+                logo_lines = _EXPERIMENTAL_LOGO
+            else:
+                logo_lines = _DEFAULT_LOGO
+                
+            logo_w = max(len(l) for l in logo_lines)
+            sep = f"  {DIM}\u2502{RESET}  "
+            
+            rows = max(len(logo_lines), len(_last_info_lines))
+            
+            # Overwrite leading blank line and move down 1 line relatively
+            sys.stdout.write("\033[K\033[1B\r")
+            for i in range(rows):
+                raw = logo_lines[i] if i < len(logo_lines) else ""
+                info = _last_info_lines[i] if i < len(_last_info_lines) else ""
+                try:
+                    from src.config import current_theme
+                    theme = current_theme()
+                except Exception:
+                    theme = "green"
+                logo = colorize_logo_line(raw.ljust(logo_w), i, theme)
+                sys.stdout.write(f"\033[K{logo}{sep}{info}\033[1B\r")
+                
+            # Overwrite trailing blank line
+            sys.stdout.write("\033[K")
+            
+            # Restore cursor
+            sys.stdout.write("\033[u")
+            
+        # Update command prompt prefix `>` on the line above
+        sys.stdout.write("\033[1A\r")
+        sys.stdout.write(f"{GREEN}>{RESET}")
+        
+        # Restore cursor to original position
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+    finally:
+        # Restore cursor visibility
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()

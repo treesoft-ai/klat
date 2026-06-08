@@ -3,7 +3,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 """
 
 import sys
-from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS, current_theme, set_theme
+from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS, current_theme, set_theme, current_ui_mode, set_ui_mode
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
 from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
@@ -108,11 +108,16 @@ def _cmd_setting(args: str) -> None:
     """Handle /setting subcommands: set, reset, random or list all settings."""
     parts = args.strip().split(None, 2)
     if not parts:
+        from src.config import current_ui_mode
         settings = get_all_settings()
-        print(f"\n  {GREEN}Klat Settings{RESET}")
+        ui_m = current_ui_mode()
+        title = "Klat Settings"
+        print(f"\n  {GREEN}{title}{RESET}")
         print("  ─────────────────────────────────────────────────────")
         for k, v in sorted(settings.items()):
-            print(f"  {k:<20}: {GREEN}{v}{RESET}")
+            display_key = k.replace("_", " ").title() if ui_m == "professional" else k
+            display_val = str(v).capitalize() if (ui_m == "professional" and isinstance(v, str) and v in ("nano", "essential", "full", "simple", "professional", "on", "off", "none", "minimal", "low", "medium", "high", "xhigh")) else v
+            print(f"  {display_key:<20}: {GREEN}{display_val}{RESET}")
         print("  ─────────────────────────────────────────────────────\n")
         return
 
@@ -302,17 +307,33 @@ def _cmd_extension(args: str, agent: KlatAgent) -> None:
 
 def _get_info_lines(ext_text: str) -> list[str]:
     from src import sessions
+    from src.config import current_ui_mode
     active_id = sessions.get_active_session_id()
     is_fresh = len([e for e in sessions.get_transcript() if e.get('type') in ('user', 'reply')]) == 0
-    session_val = "fresh" if is_fresh else active_id
+
+    ui_m = current_ui_mode()
+    if ui_m == "professional":
+        subtitle = "SWE Agent"
+        labels = ["Extensions", "Session", "Provider", "Model", "Reasoning"]
+        session_val = "Fresh" if is_fresh else active_id
+        prov_val = current_provider().title()
+        model_val = current_model()
+        reasoning_val = current_reasoning().capitalize()
+    else:
+        subtitle = "swe agent"
+        labels = ["extensions", "session", "provider", "model", "reasoning"]
+        session_val = "fresh" if is_fresh else active_id
+        prov_val = current_provider()
+        model_val = current_model()
+        reasoning_val = current_reasoning()
     
     return [
-        f"{DIM}{ui.BANNER_SUBTITLE}{RESET}   {ui.colorize_gradient('TreeSoft')}",
-        f"{DIM}extensions{RESET}  {ui.colorize_gradient(ext_text)}",
-        f"{DIM}session{RESET}     {ui.colorize_gradient(session_val)}",
-        f"{DIM}provider{RESET}    {ui.colorize_gradient(current_provider())}",
-        f"{DIM}model{RESET}       {ui.colorize_gradient(current_model())}",
-        f"{DIM}reasoning{RESET}   {ui.colorize_gradient(current_reasoning())}",
+        f"{DIM}{subtitle}{RESET}   {ui.colorize_gradient('TreeSoft')}",
+        f"{DIM}{labels[0].ljust(10)}{RESET}  {ui.colorize_gradient(ext_text)}",
+        f"{DIM}{labels[1].ljust(10)}{RESET}  {ui.colorize_gradient(session_val)}",
+        f"{DIM}{labels[2].ljust(10)}{RESET}  {ui.colorize_gradient(prov_val)}",
+        f"{DIM}{labels[3].ljust(10)}{RESET}  {ui.colorize_gradient(model_val)}",
+        f"{DIM}{labels[4].ljust(10)}{RESET}  {ui.colorize_gradient(reasoning_val)}",
     ]
 
 
@@ -512,8 +533,11 @@ def _cmd_demo() -> None:
 
 
 def _cmd_help() -> None:
+    from src.config import current_ui_mode
+    ui_m = current_ui_mode()
+    title = "Klat Slash Commands" if ui_m == "professional" else "Klat slash commands"
     print(f"""
-  {GREEN}Klat slash commands{RESET}
+  {GREEN}{title}{RESET}
   ─────────────────────────────────────────────────────
   /provider              list all providers
   /provider <name>       switch active provider
@@ -525,6 +549,8 @@ def _cmd_help() -> None:
   /streaming <on|off>    toggle streaming response on or off
   /complexity            show current complexity level
   /complexity <level>    set complexity level (nano, essential, full)
+  /ui                    show current UI mode
+  /ui <mode>             set UI mode (simple, professional)
   /theme                 list all themes
   /theme <name>          set theme (presets or two hex codes for custom)
   /setting               show all settings and their current values
@@ -588,6 +614,27 @@ def _cmd_complexity(args: str, agent: "KlatAgent") -> None:
     except ValueError as e:
         agent_error(str(e))
         print(f"  Available levels: {', '.join(COMPLEXITY_LEVELS)}\n")
+
+
+def _cmd_ui(args: str, agent: "KlatAgent") -> None:
+    """Handle /ui [mode] — show or change the UI mode."""
+    from src.config import current_ui_mode, set_ui_mode
+    val = args.strip().lower()
+
+    if not val:
+        mode = current_ui_mode()
+        print(f"\n  UI Mode: {GREEN}{mode.capitalize()}{RESET}")
+        print(f"  {DIM}simple{RESET}       — simple clean UI, all lowercase labels")
+        print(f"  {DIM}professional{RESET} — professional UI, capitalized labels and actions")
+        print()
+        return
+
+    try:
+        set_ui_mode(val)
+        agent_print(f"UI mode set to {GREEN}{current_ui_mode().capitalize()}{RESET}")
+    except ValueError as e:
+        agent_error(str(e))
+        print("  Available modes: simple, professional\n")
 
 
 def _cmd_theme(args: str) -> None:
@@ -775,6 +822,8 @@ def main() -> None:
                         _cmd_streaming(remainder)
                     elif cmd == "complexity":
                         _cmd_complexity(remainder, agent)
+                    elif cmd == "ui":
+                        _cmd_ui(remainder, agent)
                     elif cmd == "theme":
                         _cmd_theme(remainder)
                     elif cmd == "onboard":
