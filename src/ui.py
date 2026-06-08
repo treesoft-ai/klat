@@ -873,6 +873,14 @@ if HAS_PROMPT_TOOLKIT:
                 key_bindings=kb
             )
             
+            @_prompt_session.default_buffer.on_text_changed.add_handler
+            def _(buffer):
+                try:
+                    from src.tools import _send_vscode_message
+                    _send_vscode_message({"action": "status", "state": "idle"})
+                except Exception:
+                    pass
+            
             # Customize the layout of PromptSession to:
             # 1. Start suggestions at the start of the line (left-aligned)
             # 2. Add 1 line of padding from the input box

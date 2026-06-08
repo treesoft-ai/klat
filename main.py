@@ -788,6 +788,9 @@ def main() -> None:
 
             # ── Slash commands ────────────────────────────────────────────
             if raw.startswith("/"):
+                from src.tools import _send_vscode_message
+                _send_vscode_message({"action": "status", "state": "working"})
+
                 sessions.record_ui_event("command", text=raw)
                 parts     = raw[1:].split(None, 1)   # strip the leading "/"
                 cmd       = parts[0].lower()
@@ -806,6 +809,7 @@ def main() -> None:
                         history=history,
                         backend=backend
                     )
+                    _send_vscode_message({"action": "status", "state": "done"})
                     continue
 
                 # Intercept stdout to capture output of command
@@ -876,6 +880,7 @@ def main() -> None:
                     history=history,
                     backend=backend
                 )
+                _send_vscode_message({"action": "status", "state": "done"})
                 continue
 
             # ── Chat ──────────────────────────────────────────────────────

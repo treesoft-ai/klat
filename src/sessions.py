@@ -100,6 +100,11 @@ def clear_transcript() -> None:
     global _current_transcript
     _current_transcript = []
     reset_session_tokens()
+    try:
+        from src.tools import clear_vscode
+        clear_vscode()
+    except Exception:
+        pass
 
 def serialize_history(history: list, backend: str) -> list:
     if backend == "gemini":

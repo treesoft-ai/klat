@@ -1,0 +1,78 @@
+{
+  "name": "klat-vscode",
+  "displayName": "Klat VSCode Integration",
+  "description": "Automatically opens files modified by Klat CLI.",
+  "version": "1.0.0",
+  "publisher": "alexutzusoft",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Klat Integration",
+      "properties": {
+        "klat.port": {
+          "type": "integer",
+          "default": 55282,
+          "description": "Port to listen on for file modification notifications from Klat CLI."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "klat-sidebar",
+          "title": "Klat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "klat-sidebar": [
+        {
+          "id": "klat-modified-files",
+          "name": "Klat",
+          "type": "tree"
+        }
+      ]
+    },
+    "colors": [
+      {
+        "id": "klat.accentColor",
+        "description": "Accent color matching Klat's theme color",
+        "defaults": {
+          "dark": "#00b450",
+          "light": "#00b450",
+          "highContrast": "#00b450"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "klat.reconnect",
+        "title": "Reconnect",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "klat.openFile",
+        "title": "Open File"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "klat.reconnect",
+          "when": "view == klat-modified-files",
+          "group": "navigation"
+        }
+      ]
+    }
+  }
+}

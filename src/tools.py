@@ -1525,10 +1525,122 @@ _TOOL_UNAVAILABLE_MSG = (
 )
 
 
+def _get_vscode_port() -> int:
+    """Get VSCode integration port from settings, defaulting to 55282."""
+    from src.config import _config
+    try:
+        return int(_config.get("vscode_port", 55282))
+    except (ValueError, TypeError):
+        return 55282
+
+
+_vscode_socket = None
+
+
+def _get_vscode_socket():
+    """Lazily initialize and return a persistent TCP connection to the VSCode extension."""
+    global _vscode_socket
+    if _vscode_socket is not None:
+        return _vscode_socket
+
+    import socket
+    port = _get_vscode_port()
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.05)  # 50ms connection timeout
+        s.connect(("127.0.0.1", port))
+        s.settimeout(None)
+        _vscode_socket = s
+        return _vscode_socket
+    except (socket.error, TimeoutError, ConnectionError, OSError):
+        _vscode_socket = None
+        return None
+
+
+def _send_vscode_message(msg: dict) -> None:
+    """Send a line-buffered JSON message to the VSCode extension."""
+    s = _get_vscode_socket()
+    if s is None:
+        return
+    try:
+        import json
+        payload = json.dumps(msg) + "\n"
+        s.sendall(payload.encode("utf-8"))
+    except Exception:
+        global _vscode_socket
+        try:
+            s.close()
+        except Exception:
+            pass
+        _vscode_socket = None
+
+
+def _notify_vscode(path: Path, status: str) -> None:
+    """Notify the VSCode extension that a file was modified."""
+    _send_vscode_message({
+        "action": "open",
+        "path": str(path.resolve()),
+        "status": status
+    })
+
+
+def clear_vscode() -> None:
+    """Clear the modified files list in VSCode extension."""
+    _send_vscode_message({
+        "action": "clear"
+    })
+
+
+def query_vscode_state() -> dict:
+    """Query the current active editor state from the VSCode extension."""
+    s = _get_vscode_socket()
+    if s is None:
+        return {}
+    try:
+        s.settimeout(0.2)  # 200ms read timeout
+        s.sendall(b'{"action": "get_state"}\n')
+        
+        f = s.makefile("r", encoding="utf-8")
+        line = f.readline()
+        f.close()
+        s.settimeout(None)
+        if line:
+            import json
+            return json.loads(line)
+    except Exception:
+        global _vscode_socket
+        try:
+            s.close()
+        except Exception:
+            pass
+        _vscode_socket = None
+    return {}
+
+
 def dispatch(name: str, args: dict) -> str:
     """Public entry point — runs the tool then updates live bench telemetry."""
+    # Check if file exists before dispatching (useful for write_file status U/M)
+    path_arg = args.get("path")
+    existed = False
+    if name in ("write_file", "patch_file", "insert_lines", "replace_in_file") and path_arg:
+        try:
+            existed = _resolve(path_arg).exists()
+        except Exception:
+            pass
+
     result = _dispatch_inner(name, args)
     _update_bench_telemetry(name, args, result)
+
+    # Notify VSCode extension on file modifications if tool succeeded
+    if name in ("write_file", "patch_file", "insert_lines", "replace_in_file") and not result.startswith("Error"):
+        try:
+            if path_arg:
+                resolved_path = _resolve(path_arg)
+                status = "M" if existed else "U"
+                _notify_vscode(resolved_path, status)
+        except Exception:
+            pass
+
     return result
 
 

@@ -92,6 +92,38 @@ def _load_user_instructions() -> str:
     return combined
 
 
+def _load_vscode_state() -> dict:
+    try:
+        from src.tools import query_vscode_state
+        return query_vscode_state()
+    except Exception:
+        return {}
+
+
+def _section_vscode_editor() -> str:
+    state = _load_vscode_state()
+    if not state:
+        return ""
+    
+    parts = []
+    active = state.get("active_file")
+    visible = state.get("visible_files", [])
+    highlighted = state.get("highlighted_text")
+    
+    if active:
+        parts.append(f"Active Editor File (currently open and focused in VSCode): {active}")
+    if visible:
+        visible_cleaned = [f for f in visible if f != active]
+        if visible_cleaned:
+            parts.append(f"Other Open/Visible Files in VSCode: {', '.join(visible_cleaned)}")
+    if highlighted and highlighted.strip():
+        parts.append(f"Currently Highlighted/Selected Text in Active Editor:\n```\n{highlighted}\n```")
+        
+    if parts:
+        return "## VSCode Editor Context\n" + "\n".join(parts) + "\n\n"
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
@@ -180,6 +212,7 @@ def _section_rules_core() -> str:
         "7. Git tool only. NEVER use run_command for any git operation. "
         "ALWAYS use the git tool (e.g., git(op='status'), git(op='log', args=['-15'])).\n"
         "8. Terminal environment. If the user asks what active terminal, shell, or console environment you are running in, answer directly using the 'Terminal Environment' value in your 'User Profile'. Do NOT call run_command or env_var tools for this purpose.\n"
+        "9. VSCode Editor Context. If the user asks what files are open, active, visible, or what text is selected/highlighted in their editor, answer using the 'VSCode Editor Context' section in the system prompt. Do not call run_command, process_list, or any other tools to check system-level file descriptors unless they specifically ask for system-level open file descriptors (e.g. via lsof/handle).\n"
     )
 
 
@@ -240,6 +273,7 @@ def _section_rules_full(extension_rules_section: str, preference_rules_text: str
         "16. No redundant tool calls. Use tools only when needed. Never call tools to verify information already present "
         "in the chat history — answer from history instead.\n"
         "17. Terminal environment. If the user asks what active terminal, shell, or console environment you are running in, answer directly using the 'Terminal Environment' value in your 'User Profile'. Do NOT call run_command or env_var tools for this purpose.\n"
+        "18. VSCode Editor Context. If the user asks what files are open, active, visible, or what text is selected/highlighted in their editor, answer using the 'VSCode Editor Context' section in the system prompt. Do not call run_command, process_list, or any other tools to check system-level file descriptors unless they specifically ask for system-level open file descriptors (e.g. via lsof/handle).\n"
         f"{extension_rules_section}"
         f"{preference_rules_text}"
     )
@@ -1155,23 +1189,31 @@ class KlatAgent:
 
     def chat(self, message: str) -> None:
         """Send a message, run any tool calls, and print the final reply."""
-        rebuild_system_prompt()
-        self.refresh_system_prompt()
-        provider = get_provider(current_provider())
-
-        notification = ""
-        if getattr(self, "_update_run_notification", False):
-            notification = "[System Alert: The project architecture and overview have been analyzed and updated in KLAT.md at the user's request.]\n\n"
-            self._update_run_notification = False
-
-        # Ingest file context from mentions first
-        context_str = get_file_context_str(message)
-
-        resolved_message = notification + resolve_mentions(message)
-        if context_str:
-            resolved_message += "\n\n" + context_str
-
+        from src.tools import _send_vscode_message
+        _send_vscode_message({"action": "status", "state": "working"})
+        
         try:
+            rebuild_system_prompt()
+            self.refresh_system_prompt()
+            provider = get_provider(current_provider())
+
+            notification = ""
+            if getattr(self, "_update_run_notification", False):
+                notification = "[System Alert: The project architecture and overview have been analyzed and updated in KLAT.md at the user's request.]\n\n"
+                self._update_run_notification = False
+
+            # Ingest file context from mentions first
+            context_str = get_file_context_str(message)
+
+            resolved_message = notification + resolve_mentions(message)
+            if context_str:
+                resolved_message += "\n\n" + context_str
+
+            # Dynamically prepend current VSCode Editor Context to the user message on every turn
+            vscode_context = _section_vscode_editor()
+            if vscode_context:
+                resolved_message = f"{vscode_context}\n{resolved_message}"
+
             if provider["backend"] == "gemini":
                 reply = _run_gemini(
                      resolved_message,
@@ -1223,6 +1265,8 @@ class KlatAgent:
             except Exception:
                 pass
             raise
+        finally:
+            _send_vscode_message({"action": "status", "state": "done"})
 
 
     def refresh_system_prompt(self) -> None:
