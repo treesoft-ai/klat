@@ -212,8 +212,18 @@ def run_full_onboarding(force: bool = False) -> dict:
                  "Pick at least one. You can switch providers anytime with /provider.")
         _run_setup()
 
+    # Determine if global wrapper setup should be offered
+    bin_path = Path.home() / ".klat" / "bin"
+    if force or not bin_path.exists():
+        _section("Global Access setup", "Run Klat from any folder by typing 'klat'")
+        global_choice = _ask_choice("Install global launcher wrapper?", ["Yes", "No"], allow_skip=True)
+        if global_choice == "Yes":
+            from src.global_install import install_global
+            install_global()
+
     _section("All set.", f"Preferences saved to {PREFERENCES_FILE}")
     return prefs
+
 
 
 def save_preferences(prefs: dict) -> None:

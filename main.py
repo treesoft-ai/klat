@@ -558,6 +558,7 @@ def _cmd_help() -> None:
   /setting reset <k>     reset setting key <k> to default
   /setting random <k>    randomize setting key <k>
   /onboard               re-run onboarding (personal questions + provider setup)
+  /global                install or update global command wrapper (run klat anywhere)
   /create                analyze codebase and generate project reference KLAT.md
   /update                re-analyze codebase and overwrite KLAT.md
   /extension             extension manager options
@@ -589,6 +590,12 @@ def _cmd_onboard(agent: KlatAgent) -> None:
     from src.agent import rebuild_system_prompt
     rebuild_system_prompt()
     agent.refresh_system_prompt()
+
+
+def _cmd_global() -> None:
+    """Handle /global — install or update the global Klat command wrapper."""
+    from src.global_install import install_global
+    install_global()
 
 
 
@@ -828,6 +835,8 @@ def main() -> None:
                         _cmd_theme(remainder)
                     elif cmd == "onboard":
                         _cmd_onboard(agent)
+                    elif cmd in ("global", "install"):
+                        _cmd_global()
                     elif cmd == "extension":
                         _cmd_extension(remainder, agent)
                     elif cmd == "session":

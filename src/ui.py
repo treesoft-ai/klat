@@ -553,6 +553,8 @@ if HAS_PROMPT_TOOLKIT:
                 "/reset",
                 "/help",
                 "/create",
+                "/global",
+                "/install",
             ]
             # Sort shortest first so root commands suggest before subcommands
             self.commands.sort(key=len)
