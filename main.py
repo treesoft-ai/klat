@@ -598,7 +598,7 @@ def _cmd_theme(args: str) -> None:
         name = "pure white"
 
     if not name:
-        themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
+        themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"]
         print(f"\n  Available themes:")
         print(f"  ─────────────────────────────────────────────────────")
         current = current_theme()
@@ -615,7 +615,7 @@ def _cmd_theme(args: str) -> None:
         agent_print(f"Theme set to {GREEN}{current_theme()}{RESET}")
     except ValueError as e:
         agent_error(str(e))
-        print("  Available themes: green, red, blue, yellow, pure white, orange, purple, cyan, pink, rainbow\n")
+        print("  Available themes: green, red, blue, yellow, pure white, orange, purple, cyan, pink, rainbow, cyberpunk, sunset, matrix, ocean, forest\n")
         print("  Or enter two hex codes for a custom theme (e.g. '/theme #ff0055 #00ffcc')\n")
 
 

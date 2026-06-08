@@ -75,6 +75,36 @@ THEME_CONFIG = {
         "hex": "#00e5a3",
         "start": (0, 229, 163),
         "end": (0, 255, 204)
+    },
+    "cyberpunk": {
+        "accent": "\033[38;2;255;0;128m",
+        "hex": "#ff0080",
+        "start": (255, 0, 128),
+        "end": (0, 255, 255)
+    },
+    "sunset": {
+        "accent": "\033[38;2;255;0;128m",
+        "hex": "#ff0080",
+        "start": (255, 0, 128),
+        "end": (255, 170, 0)
+    },
+    "matrix": {
+        "accent": "\033[38;2;0;255;68m",
+        "hex": "#00ff44",
+        "start": (0, 100, 0),
+        "end": (0, 255, 68)
+    },
+    "ocean": {
+        "accent": "\033[38;2;0;102;255m",
+        "hex": "#0066ff",
+        "start": (0, 50, 150),
+        "end": (0, 204, 255)
+    },
+    "forest": {
+        "accent": "\033[38;2;140;200;120m",
+        "hex": "#8cc878",
+        "start": (20, 80, 40),
+        "end": (140, 200, 120)
     }
 }
 
@@ -534,7 +564,7 @@ if HAS_PROMPT_TOOLKIT:
             # Smart completion for /theme
             if text.startswith("/theme "):
                 arg = text[len("/theme "):]
-                themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
+                themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"]
                 for t in themes:
                     if t.startswith(arg) and t != arg:
                         return Suggestion(t[len(arg):])
@@ -557,7 +587,7 @@ if HAS_PROMPT_TOOLKIT:
                     elif key == "complexity":
                         candidates = ["nano", "essential", "full"]
                     elif key == "theme":
-                        candidates = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
+                        candidates = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"]
                     elif key == "provider":
                         try:
                             from src.config import configured_providers

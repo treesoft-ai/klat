@@ -78,7 +78,7 @@ def set_theme(value: str) -> None:
         val = "pure white"
     if val == "animated_rainbow":
         raise ValueError("animated_rainbow is currently disabled due to reliability and other bugs")
-    allowed = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"}
+    allowed = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"}
     from src.ui import parse_custom_theme
     custom = parse_custom_theme(value)
     if val not in allowed and not custom:
@@ -312,7 +312,7 @@ def randomize_config_value(key: str) -> str:
         _persist()
         return val
     elif key_lower == "theme":
-        themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"]
+        themes = ["green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"]
         val = random.choice(themes)
         set_theme(val)
         return val
@@ -538,7 +538,7 @@ def ensure_env() -> tuple[str, str]:
         _state["complexity"] = saved_complexity
     else:
         _state["complexity"] = "full"
-    allowed_themes = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow"}
+    allowed_themes = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"}
     from src.ui import parse_custom_theme
     if saved_theme == "animated_rainbow":
         _state["theme"] = "green"
