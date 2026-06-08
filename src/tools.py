@@ -665,16 +665,56 @@ TOOL_DECLARATIONS = [
             },
             "required": ["goal_description", "proposed_changes", "verification_plan"],
         },
+    },
+    {
+        "name": "todo",
+        "description": (
+            "Manage the session's to-do/task list to track progress. "
+            "Supported actions: 'list', 'add', 'start', 'complete', 'reset', 'remove', 'clear'. "
+            "For 'add', provide 'text' (single task) or 'tasks' (array of tasks). "
+            "For 'start', 'complete', 'reset', 'remove', provide 'index' (single) or 'indices' (array)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "add", "start", "complete", "reset", "remove", "clear"],
+                    "description": "The action to perform.",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "A single task description.",
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "A list of task descriptions for batch adding.",
+                },
+                "index": {
+                    "type": "integer",
+                    "description": "A single 1-based task index.",
+                },
+                "indices": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "A list of 1-based task indices for batch operations.",
+                },
+            },
+            "required": ["action"],
+        },
     }
 ]
 
 # Minimum complexity level required to expose each built-in tool.
 # "essential" maps to level 2, "full" maps to level 3.
 # Tools absent from this map default to "essential".
+# Added "todo" tool map entry under essential level.
 TOOL_LEVEL_MAP: dict[str, str] = {
     "read_file":       "nano",
     "write_file":      "nano",
     "plan":            "essential",
+    "todo":            "essential",
     "patch_file":      "essential",
     "replace_in_file": "essential",
     "insert_lines":    "essential",
@@ -1733,6 +1773,14 @@ def _dispatch_inner(name: str, args: dict) -> str:
                 user_review_required=args.get("user_review_required"),
                 open_questions=args.get("open_questions"),
             )
+        if name == "todo":
+            return _todo(
+                action=args["action"],
+                text=args.get("text"),
+                tasks=args.get("tasks"),
+                index=args.get("index"),
+                indices=args.get("indices"),
+            )
         if name in ("read_file", "read_file_slice"):
             return _read_file(
                 args["path"],
@@ -1846,4 +1894,127 @@ def _dispatch_inner(name: str, args: dict) -> str:
         return f"Error: bad tool arguments: {e}"
     except Exception as e:
         return f"Error in {name}: {e}"
+
+
+def _todo(
+    action: str,
+    text: str | None = None,
+    tasks: list[str] | None = None,
+    index: int | None = None,
+    indices: list[int] | None = None,
+) -> str:
+    """Manage the active session's to-do/task list. Rebuild prompt on edits."""
+    from src import sessions
+    from src.todo import (
+        load_todo_list, add_task, add_tasks, update_task_status, update_tasks_status,
+        remove_task, remove_tasks, clear_tasks, format_todo_list_text
+    )
+    from src.agent import rebuild_system_prompt, KlatAgent
+
+    session_id: str = sessions.get_active_session_id()
+    action_clean = action.lower().strip()
+
+    try:
+        if action_clean == "list":
+            todo_list = load_todo_list(session_id)
+            if not todo_list:
+                return "The to-do list is empty."
+            return format_todo_list_text(todo_list)
+
+        elif action_clean == "add":
+            if tasks:
+                add_tasks(session_id, tasks)
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Added {len(tasks)} tasks."
+            elif text and text.strip():
+                add_task(session_id, text)
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Added task: '{text.strip()}'."
+            else:
+                return "Error: either 'text' or 'tasks' parameter is required and must not be empty for action='add'."
+
+        elif action_clean == "start":
+            if indices:
+                update_tasks_status(session_id, indices, "in_progress")
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Tasks {indices} marked in progress."
+            elif index is not None:
+                update_task_status(session_id, index, "in_progress")
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Task {index} marked in progress."
+            else:
+                return "Error: either 'index' or 'indices' parameter is required for action='start'."
+
+        elif action_clean == "complete":
+            if indices:
+                update_tasks_status(session_id, indices, "done")
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Tasks {indices} marked completed."
+            elif index is not None:
+                update_task_status(session_id, index, "done")
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Task {index} marked completed."
+            else:
+                return "Error: either 'index' or 'indices' parameter is required for action='complete'."
+
+        elif action_clean == "reset":
+            if indices:
+                update_tasks_status(session_id, indices, "todo")
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Tasks {indices} marked uncompleted."
+            elif index is not None:
+                update_task_status(session_id, index, "todo")
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Task {index} marked uncompleted."
+            else:
+                return "Error: either 'index' or 'indices' parameter is required for action='reset'."
+
+        elif action_clean == "remove":
+            if indices:
+                remove_tasks(session_id, indices)
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Tasks {indices} removed."
+            elif index is not None:
+                remove_task(session_id, index)
+                rebuild_system_prompt()
+                if KlatAgent.active_instance:
+                    KlatAgent.active_instance.refresh_system_prompt()
+                return f"Task {index} removed."
+            else:
+                return "Error: either 'index' or 'indices' parameter is required for action='remove'."
+
+        elif action_clean == "clear":
+            clear_tasks(session_id)
+            rebuild_system_prompt()
+            if KlatAgent.active_instance:
+                KlatAgent.active_instance.refresh_system_prompt()
+            return "Cleared completed tasks."
+
+        else:
+            return f"Error: Unknown action '{action}'."
+    except IndexError as e:
+        return f"Error: Invalid index: {e}"
+    except ValueError as e:
+        return f"Error: Invalid value: {e}"
+    except Exception as e:
+        return f"Error: {e}"
+
 

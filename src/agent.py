@@ -146,6 +146,7 @@ def _section_tools_essential() -> str:
         "- read_file(path, [start_line], [end_line])           — read a single file (with optional line range) or an array of paths\n"
         "- write_file(path, content)                           — create or overwrite a file\n"
         "- plan(goal_description, proposed_changes, verification_plan, [user_review_required], [open_questions]) — propose an implementation plan and wait for user approval\n"
+        "- todo(action, [text], [tasks], [index], [indices])   — manage the session's to-do/task list to track progress\n"
         "- patch_file(path, start_line, end_line, new_content) — replace lines in-place\n"
         "- insert_lines(path, after_line, content)             — insert lines without replacing (after_line=0 to prepend)\n"
         "- replace_in_file(path, old_text, new_text, [count]) — find-and-replace by text; count=-1 for all occurrences\n"
@@ -164,6 +165,7 @@ def _section_tools_full(extension_tools_section: str) -> str:
         "- read_file(path, [start_line], [end_line])           — read a single file (with optional line range) or an array of paths\n"
         "- write_file(path, content)                           — create or overwrite a file\n"
         "- plan(goal_description, proposed_changes, verification_plan, [user_review_required], [open_questions]) — propose an implementation plan and wait for user approval\n"
+        "- todo(action, [text], [tasks], [index], [indices])   — manage the session's to-do/task list to track progress\n"
         "- patch_file(path, start_line, end_line, new_content) — replace lines in-place\n"
         "- insert_lines(path, after_line, content)             — insert lines without replacing (after_line=0 to prepend)\n"
         "- replace_in_file(path, old_text, new_text, [count]) — find-and-replace by text; count=-1 for all occurrences\n"
@@ -402,6 +404,23 @@ def _load_prefs_sections() -> tuple[str, str]:
 # System prompt assembly by complexity level
 # ---------------------------------------------------------------------------
 
+def _section_todo_list() -> str:
+    """Return the session's active to-do list formatted as a system prompt section."""
+    from src import sessions
+    from src.todo import load_todo_list, format_todo_list_text
+    import sys
+    try:
+        session_id = sessions.get_active_session_id()
+        todo_list = load_todo_list(session_id)
+        if not todo_list:
+            return ""
+        formatted = format_todo_list_text(todo_list, numbered=False)
+        return f"\n## Active To-Do List / Tasks\nUse this list to track your progress and do not get lost. Update it using the 'todo' tool when you start or complete tasks:\n{formatted}\n"
+    except Exception as e:
+        print(f"Warning: Failed to load to-do list in system prompt builder: {e}", file=sys.stderr)
+        return ""
+
+
 def _build_system_prompt() -> str:
     from src.config import current_complexity
     level = current_complexity()
@@ -438,6 +457,7 @@ def _build_system_prompt() -> str:
             f"{_section_tools_essential()}"
             f"{_section_rules_core()}"
             f"{preference_rules_text}"
+            f"{_section_todo_list()}"
         )
 
     # level == "full"
@@ -452,6 +472,7 @@ def _build_system_prompt() -> str:
         f"{_section_rules_full(extension_rules_section, preference_rules_text)}"
         f"{_section_output_formatting()}"
         f"\n{user_inst_section}"
+        f"{_section_todo_list()}"
     )
 
 SYSTEM_PROMPT = _build_system_prompt()
