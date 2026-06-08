@@ -632,6 +632,39 @@ TOOL_DECLARATIONS = [
             },
             "required": []
         }
+    },
+    {
+        "name": "plan",
+        "description": (
+            "Propose a detailed technical implementation plan to the user for feedback and approval. "
+            "Use this tool before executing complex tasks or code changes."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "goal_description": {
+                    "type": "string",
+                    "description": "Brief description of the problem, background context, and what the change accomplishes.",
+                },
+                "proposed_changes": {
+                    "type": "string",
+                    "description": "Details of files to be modified, created, or deleted grouped by component.",
+                },
+                "verification_plan": {
+                    "type": "string",
+                    "description": "Summary of how changes will be verified (automated tests, manual validation).",
+                },
+                "user_review_required": {
+                    "type": "string",
+                    "description": "Document anything requiring user review/feedback (breaking changes, design decisions).",
+                },
+                "open_questions": {
+                    "type": "string",
+                    "description": "Any clarifying/design questions for the user that impact the plan.",
+                },
+            },
+            "required": ["goal_description", "proposed_changes", "verification_plan"],
+        },
     }
 ]
 
@@ -641,6 +674,7 @@ TOOL_DECLARATIONS = [
 TOOL_LEVEL_MAP: dict[str, str] = {
     "read_file":       "nano",
     "write_file":      "nano",
+    "plan":            "essential",
     "patch_file":      "essential",
     "replace_in_file": "essential",
     "insert_lines":    "essential",
@@ -1644,12 +1678,61 @@ def dispatch(name: str, args: dict) -> str:
     return result
 
 
+def format_plan_markdown(
+    goal_description: str,
+    proposed_changes: str,
+    verification_plan: str,
+    user_review_required: str | None = None,
+    open_questions: str | None = None,
+) -> str:
+    """Format implementation plan sections into standard markdown layout."""
+    lines = [
+        f"# Goal Description\n\n{goal_description}\n"
+    ]
+    if user_review_required and user_review_required.strip():
+        lines.append(f"## User Review Required\n\n{user_review_required}\n")
+    if open_questions and open_questions.strip():
+        lines.append(f"## Open Questions\n\n{open_questions}\n")
+    lines.append(f"## Proposed Changes\n\n{proposed_changes}\n")
+    lines.append(f"## Verification Plan\n\n{verification_plan}\n")
+    return "\n".join(lines)
+
+
+def _plan(
+    goal_description: str,
+    proposed_changes: str,
+    verification_plan: str,
+    user_review_required: str | None = None,
+    open_questions: str | None = None,
+) -> str:
+    """Compile the proposed plan, print it to the terminal, and return success."""
+    plan_content = format_plan_markdown(
+        goal_description=goal_description,
+        proposed_changes=proposed_changes,
+        verification_plan=verification_plan,
+        user_review_required=user_review_required,
+        open_questions=open_questions,
+    )
+    print("\nImplementation Plan\n")
+    print(plan_content.strip())
+    print()
+    return "Plan proposed successfully to the user."
+
+
 def _dispatch_inner(name: str, args: dict) -> str:
     try:
         # Allowlist gate — must run before any tool logic
         if not _is_tool_allowed(name):
             return _TOOL_UNAVAILABLE_MSG
 
+        if name == "plan":
+            return _plan(
+                goal_description=args["goal_description"],
+                proposed_changes=args["proposed_changes"],
+                verification_plan=args["verification_plan"],
+                user_review_required=args.get("user_review_required"),
+                open_questions=args.get("open_questions"),
+            )
         if name in ("read_file", "read_file_slice"):
             return _read_file(
                 args["path"],

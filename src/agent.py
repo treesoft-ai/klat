@@ -145,6 +145,7 @@ def _section_tools_essential() -> str:
         "## Tools\n"
         "- read_file(path, [start_line], [end_line])           — read a single file (with optional line range) or an array of paths\n"
         "- write_file(path, content)                           — create or overwrite a file\n"
+        "- plan(goal_description, proposed_changes, verification_plan, [user_review_required], [open_questions]) — propose an implementation plan and wait for user approval\n"
         "- patch_file(path, start_line, end_line, new_content) — replace lines in-place\n"
         "- insert_lines(path, after_line, content)             — insert lines without replacing (after_line=0 to prepend)\n"
         "- replace_in_file(path, old_text, new_text, [count]) — find-and-replace by text; count=-1 for all occurrences\n"
@@ -162,6 +163,7 @@ def _section_tools_full(extension_tools_section: str) -> str:
         "## Tools\n"
         "- read_file(path, [start_line], [end_line])           — read a single file (with optional line range) or an array of paths\n"
         "- write_file(path, content)                           — create or overwrite a file\n"
+        "- plan(goal_description, proposed_changes, verification_plan, [user_review_required], [open_questions]) — propose an implementation plan and wait for user approval\n"
         "- patch_file(path, start_line, end_line, new_content) — replace lines in-place\n"
         "- insert_lines(path, after_line, content)             — insert lines without replacing (after_line=0 to prepend)\n"
         "- replace_in_file(path, old_text, new_text, [count]) — find-and-replace by text; count=-1 for all occurrences\n"
@@ -213,6 +215,7 @@ def _section_rules_core() -> str:
         "ALWAYS use the git tool (e.g., git(op='status'), git(op='log', args=['-15'])).\n"
         "8. Terminal environment. If the user asks what active terminal, shell, or console environment you are running in, answer directly using the 'Terminal Environment' value in your 'User Profile'. Do NOT call run_command or env_var tools for this purpose.\n"
         "9. VSCode Editor Context. If the user asks what files are open, active, visible, or what text is selected/highlighted in their editor, answer using the 'VSCode Editor Context' section in the system prompt. Do not call run_command, process_list, or any other tools to check system-level file descriptors unless they specifically ask for system-level open file descriptors (e.g. via lsof/handle).\n"
+        "10. Propose a plan. Before starting any complex task or making any file changes, you MUST propose an implementation plan using the 'plan' tool and wait for the user to approve it. If the user denies the plan, revise it based on their feedback or ask for clarification.\n"
     )
 
 
@@ -274,6 +277,7 @@ def _section_rules_full(extension_rules_section: str, preference_rules_text: str
         "in the chat history — answer from history instead.\n"
         "17. Terminal environment. If the user asks what active terminal, shell, or console environment you are running in, answer directly using the 'Terminal Environment' value in your 'User Profile'. Do NOT call run_command or env_var tools for this purpose.\n"
         "18. VSCode Editor Context. If the user asks what files are open, active, visible, or what text is selected/highlighted in their editor, answer using the 'VSCode Editor Context' section in the system prompt. Do not call run_command, process_list, or any other tools to check system-level file descriptors unless they specifically ask for system-level open file descriptors (e.g. via lsof/handle).\n"
+        "19. Propose a plan. Before starting any complex task or making any file changes, you MUST propose an implementation plan using the 'plan' tool and wait for the user to approve it. If the user denies the plan, revise it based on their feedback or ask for clarification.\n"
         f"{extension_rules_section}"
         f"{preference_rules_text}"
     )
@@ -657,8 +661,11 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
             return " ".join(parts).strip()
 
         result_parts: list[types.Part] = []
+        plan_called = False
         for call in fn_calls:
             name = call.name
+            if name == "plan":
+                plan_called = True
             args = dict(call.args) if call.args else {}
             ui.agent_step(name, _args_summary(args))
             raw = dispatch(name, args)
@@ -670,6 +677,8 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
             ))
 
         history.append(types.Content(role="user", parts=result_parts))
+        if plan_called:
+            return "Plan proposed. Please review the plan above and provide your feedback or approval."
 
 
 # ---------------------------------------------------------------------------
@@ -965,8 +974,11 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
             return clean_reply.strip()
 
         # Execute tool calls
+        plan_called = False
         for tc_idx, tc_data in sorted(accumulated_tool_calls.items()):
             name = tc_data.get("name") or "unknown_tool"
+            if name == "plan":
+                plan_called = True
             raw_args_str = tc_data.get("arguments") or "{}"
             try:
                 args = json.loads(raw_args_str)
@@ -994,6 +1006,9 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                 "tool_call_id": tc_data.get("id") or "",
                 "content":      str(raw),
             })
+
+        if plan_called:
+            return "Plan proposed. Please review the plan above and provide your feedback or approval."
 
 
 # ---------------------------------------------------------------------------
