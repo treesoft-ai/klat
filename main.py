@@ -3,6 +3,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 """
 
 import sys
+import shlex
 from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS, current_theme, set_theme, current_ui_mode, set_ui_mode
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
 from src import ui
@@ -15,7 +16,24 @@ from src.extensions import (
 )
 
 
-
+def parse_cli_args(args_str: str) -> list[str]:
+    """Parse a command argument string into tokens, respecting quotes.
+    
+    Uses posix=False to preserve Windows backslashes in paths.
+    """
+    if not args_str:
+        return []
+    try:
+        tokens = shlex.split(args_str, posix=False)
+        cleaned_tokens: list[str] = []
+        for t in tokens:
+            t_strip = t.strip()
+            if (t_strip.startswith('"') and t_strip.endswith('"')) or (t_strip.startswith("'") and t_strip.endswith("'")):
+                t_strip = t_strip[1:-1]
+            cleaned_tokens.append(t_strip)
+        return cleaned_tokens
+    except ValueError:
+        return args_str.split()
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +42,8 @@ from src.extensions import (
 
 def _cmd_provider(args: str) -> None:
     """Handle /provider [name] — list or switch providers."""
-    name = args.strip().lower()
+    tokens = parse_cli_args(args)
+    name = tokens[0].lower() if tokens else ""
 
     if not name:
         # List all providers
@@ -53,7 +72,8 @@ def _cmd_provider(args: str) -> None:
 
 def _cmd_model(args: str) -> None:
     """Handle /model [name] — show or change the active model."""
-    name = args.strip()
+    tokens = parse_cli_args(args)
+    name = tokens[0] if tokens else ""
 
     if not name:
         p = get_provider(current_provider())
@@ -70,7 +90,8 @@ def _cmd_model(args: str) -> None:
 
 def _cmd_reasoning(args: str) -> None:
     """Handle /reasoning [level] — show or change the reasoning level."""
-    val = args.strip()
+    tokens = parse_cli_args(args)
+    val = tokens[0] if tokens else ""
 
     if not val:
         print(f"\n  Reasoning Level: {GREEN}{current_reasoning().capitalize()}{RESET}\n")
@@ -87,7 +108,8 @@ def _cmd_reasoning(args: str) -> None:
 def _cmd_streaming(args: str) -> None:
     """Handle /streaming [on/off] — show or change the streaming setting."""
     from src.config import current_streaming, set_streaming
-    val = args.strip().lower()
+    tokens = parse_cli_args(args)
+    val = tokens[0].lower() if tokens else ""
 
     if not val:
         status = "On" if current_streaming() else "Off"
@@ -106,8 +128,8 @@ def _cmd_streaming(args: str) -> None:
 
 def _cmd_setting(args: str) -> None:
     """Handle /setting subcommands: set, reset, random or list all settings."""
-    parts = args.strip().split(None, 2)
-    if not parts:
+    tokens = parse_cli_args(args)
+    if not tokens:
         from src.config import current_ui_mode
         settings = get_all_settings()
         ui_m = current_ui_mode()
@@ -121,14 +143,14 @@ def _cmd_setting(args: str) -> None:
         print("  ─────────────────────────────────────────────────────\n")
         return
 
-    subcmd = parts[0].lower()
+    subcmd = tokens[0].lower()
     
     if subcmd == "set":
-        if len(parts) < 3:
+        if len(tokens) < 3:
             agent_error("Usage: /setting set <key> <value>")
             return
-        key = parts[1].strip()
-        val = parts[2].strip()
+        key = tokens[1]
+        val = " ".join(tokens[2:])
         try:
             set_config_value(key, val)
             agent_print(f"Setting '{GREEN}{key}{RESET}' set to '{GREEN}{val}{RESET}'")
@@ -136,10 +158,10 @@ def _cmd_setting(args: str) -> None:
             agent_error(str(e))
 
     elif subcmd == "reset":
-        if len(parts) < 2:
+        if len(tokens) < 2:
             agent_error("Usage: /setting reset <key>")
             return
-        key = parts[1].strip()
+        key = tokens[1]
         try:
             reset_config_value(key)
             agent_print(f"Setting '{GREEN}{key}{RESET}' reset to default")
@@ -147,10 +169,10 @@ def _cmd_setting(args: str) -> None:
             agent_error(str(e))
 
     elif subcmd == "random":
-        if len(parts) < 2:
+        if len(tokens) < 2:
             agent_error("Usage: /setting random <key>")
             return
-        key = parts[1].strip()
+        key = tokens[1]
         try:
             val = randomize_config_value(key)
             agent_print(f"Setting '{GREEN}{key}{RESET}' randomized to '{GREEN}{val}{RESET}'")
@@ -162,8 +184,8 @@ def _cmd_setting(args: str) -> None:
 
 def _cmd_extension(args: str, agent: KlatAgent) -> None:
     """Handle /extension subcommands: list, export, import, enable, disable, remove, create, dev"""
-    parts = args.strip().split(None, 1)
-    if not parts:
+    tokens = parse_cli_args(args)
+    if not tokens:
         print(f"\n  {GREEN}Klat Extension Management{RESET}")
         print("  ─────────────────────────────────────────────────────")
         print("  /extension list                 list installed extensions")
@@ -177,12 +199,8 @@ def _cmd_extension(args: str, agent: KlatAgent) -> None:
         print("  ─────────────────────────────────────────────────────\n")
         return
 
-    subcmd = parts[0].lower()
-    remainder = parts[1].strip() if len(parts) > 1 else ""
-
-    # Strip quotes if path has quotes
-    if (remainder.startswith('"') and remainder.endswith('"')) or (remainder.startswith("'") and remainder.endswith("'")):
-        remainder = remainder[1:-1]
+    subcmd = tokens[0].lower()
+    remainder = " ".join(tokens[1:]) if len(tokens) > 1 else ""
 
     if subcmd == "list":
         exts = list_extensions()
@@ -339,8 +357,8 @@ def _get_info_lines(ext_text: str) -> list[str]:
 
 def _cmd_session(args: str, agent: KlatAgent, project: str, location: str) -> KlatAgent:
     """Handle /session subcommands: list, new, load, delete"""
-    parts = args.strip().split(None, 1)
-    if not parts:
+    tokens = parse_cli_args(args)
+    if not tokens:
         print(f"\n  {GREEN}Klat Session Management{RESET}")
         print("  ─────────────────────────────────────────────────────")
         print("  /session list                 list all saved sessions")
@@ -350,8 +368,8 @@ def _cmd_session(args: str, agent: KlatAgent, project: str, location: str) -> Kl
         print("  ─────────────────────────────────────────────────────\n")
         return agent
 
-    subcmd = parts[0].lower()
-    remainder = parts[1].strip() if len(parts) > 1 else ""
+    subcmd = tokens[0].lower()
+    remainder = " ".join(tokens[1:]) if len(tokens) > 1 else ""
 
     from src import sessions
 
@@ -601,7 +619,8 @@ def _cmd_global() -> None:
 
 def _cmd_complexity(args: str, agent: "KlatAgent") -> None:
     """Handle /complexity [level] — show or change the complexity level."""
-    val = args.strip().lower()
+    tokens = parse_cli_args(args)
+    val = tokens[0].lower() if tokens else ""
 
     if not val:
         level = current_complexity()
@@ -626,7 +645,8 @@ def _cmd_complexity(args: str, agent: "KlatAgent") -> None:
 def _cmd_ui(args: str, agent: "KlatAgent") -> None:
     """Handle /ui [mode] — show or change the UI mode."""
     from src.config import current_ui_mode, set_ui_mode
-    val = args.strip().lower()
+    tokens = parse_cli_args(args)
+    val = tokens[0].lower() if tokens else ""
 
     if not val:
         mode = current_ui_mode()
@@ -646,7 +666,8 @@ def _cmd_ui(args: str, agent: "KlatAgent") -> None:
 
 def _cmd_theme(args: str) -> None:
     """Handle /theme [name] — show or change the active theme."""
-    name = args.strip().lower()
+    tokens = parse_cli_args(args)
+    name = " ".join(tokens).lower() if tokens else ""
 
     if name in ("pure white", "pure_white", "white"):
         name = "pure white"
@@ -665,7 +686,7 @@ def _cmd_theme(args: str) -> None:
         return
 
     try:
-        set_theme(args.strip())
+        set_theme(" ".join(tokens))
         agent_print(f"Theme set to {GREEN}{current_theme()}{RESET}")
     except ValueError as e:
         agent_error(str(e))
