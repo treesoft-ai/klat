@@ -12,7 +12,7 @@ Each provider entry defines:
 
 from __future__ import annotations
 
-PROVIDERS: dict[str, dict] = {
+BUILTIN_PROVIDERS: dict[str, dict] = {
     # ------------------------------------------------------------------ #
     #  Vertex AI — Google's enterprise Gemini platform (ADC, no key)      #
     # ------------------------------------------------------------------ #
@@ -86,8 +86,51 @@ PROVIDERS: dict[str, dict] = {
     },
 }
 
-# Ordered list for display / tab completion
-PROVIDER_NAMES: list[str] = list(PROVIDERS.keys())
+PROVIDERS: dict[str, dict] = {}
+PROVIDER_NAMES: list[str] = []
+
+
+def load_custom_providers() -> None:
+    """Load custom provider configurations from ~/.klat/settings/providers/."""
+    import json
+    import sys
+    from pathlib import Path
+
+    PROVIDERS.clear()
+    PROVIDERS.update(BUILTIN_PROVIDERS)
+
+    providers_dir: Path = Path.home() / ".klat" / "settings" / "providers"
+    if providers_dir.exists():
+        try:
+            for file_path in providers_dir.glob("*.json"):
+                if not file_path.is_file():
+                    continue
+                provider_name: str = file_path.stem.lower().strip()
+                try:
+                    with open(file_path, "r", encoding="utf-8") as file_handle:
+                        config_data = json.load(file_handle)
+                    if isinstance(config_data, dict):
+                        PROVIDERS[provider_name] = {
+                            "display_name": str(config_data.get("display_name", provider_name.title())),
+                            "backend": str(config_data.get("backend", "openai-compat")),
+                            "base_url": config_data.get("base_url"),
+                            "default_model": str(config_data.get("default_model", "")),
+                            "env_key": config_data.get("env_key"),
+                            "notes": str(config_data.get("notes", f"Custom provider '{provider_name}'")),
+                        }
+                except json.JSONDecodeError as decode_error:
+                    sys.stderr.write(f"Warning: Failed to parse custom provider config {file_path}: {decode_error}\n")
+                except OSError as os_error:
+                    sys.stderr.write(f"Warning: Failed to read custom provider config {file_path}: {os_error}\n")
+        except OSError as dir_error:
+            sys.stderr.write(f"Warning: Failed to access custom providers directory: {dir_error}\n")
+
+    PROVIDER_NAMES.clear()
+    PROVIDER_NAMES.extend(list(PROVIDERS.keys()))
+
+
+# Initialize providers list on import
+load_custom_providers()
 
 
 def get_provider(name: str) -> dict:

@@ -5,7 +5,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 import sys
 import shlex
 from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS, current_theme, set_theme, current_ui_mode, set_ui_mode
-from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
+from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider, load_custom_providers
 from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
 from src.agent import KlatAgent
@@ -40,10 +40,215 @@ def parse_cli_args(args_str: str) -> list[str]:
 # Slash-command handlers
 # ---------------------------------------------------------------------------
 
+def _prompt_with_default(prompt: str, default: str) -> str:
+    """Prompt the user with a default option."""
+    try:
+        res = input(f"  {prompt} [{default}]: ").strip()
+        return res if res else default
+    except (KeyboardInterrupt, EOFError):
+        print()
+        raise
+
+
+def _cmd_provider_add(name: str) -> None:
+    """Add a new custom provider configuration."""
+    from pathlib import Path
+    import json
+    from src.providers import load_custom_providers, PROVIDERS
+    
+    # Validation of provider name
+    if not name.replace("-", "").replace("_", "").isalnum():
+        agent_error("Provider name must contain only alphanumeric characters, dashes, or underscores.")
+        return
+        
+    if name in {"vertexai", "ai-studio", "openai", "anthropic", "openrouter", "nvidia-nim"}:
+        agent_error(f"Provider name '{name}' conflicts with a built-in provider.")
+        return
+
+    # Check if already exists
+    providers_dir = Path.home() / ".klat" / "settings" / "providers"
+    file_path = providers_dir / f"{name}.json"
+    if file_path.exists():
+        agent_error(f"Provider '{name}' already exists. Use '/provider edit {name}' to modify it.")
+        return
+
+    print(f"\n  Configuring new provider: {GREEN}{name}{RESET}\n")
+    try:
+        display_name = _prompt_with_default("Display Name", name.title())
+        
+        backend = ""
+        while backend not in ("openai-compat", "gemini"):
+            backend = _prompt_with_default("Backend (openai-compat/gemini)", "openai-compat").lower().strip()
+            
+        base_url_default = "https://api.openai.com/v1" if backend == "openai-compat" else ""
+        base_url_input = _prompt_with_default("Base URL (blank for none)", base_url_default)
+        base_url = base_url_input if base_url_input else None
+        
+        default_model = _prompt_with_default("Default Model", "gpt-4o")
+        
+        env_key_default = f"{name.upper().replace('-', '_')}_API_KEY"
+        env_key_input = _prompt_with_default("Environment API Key Name (blank for none)", env_key_default)
+        env_key = env_key_input if env_key_input else None
+        
+        notes = _prompt_with_default("Notes/Description", f"Custom provider '{name}'")
+        
+        config_data = {
+            "display_name": display_name,
+            "backend": backend,
+            "base_url": base_url,
+            "default_model": default_model,
+            "env_key": env_key,
+            "notes": notes
+        }
+        
+        providers_dir.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+            
+        load_custom_providers()
+        agent_print(f"Provider '{GREEN}{name}{RESET}' successfully created!")
+        
+        # Optionally set the API key
+        if env_key:
+            api_key = input(f"  Enter value for environment key {GREEN}{env_key}{RESET} (blank to skip): ").strip()
+            if api_key:
+                set_config_value(env_key.lower(), api_key)
+                agent_print(f"Saved {GREEN}{env_key}{RESET} to settings.")
+                
+    except (KeyboardInterrupt, EOFError):
+        agent_print("Creation cancelled.")
+    except OSError as e:
+        agent_error(f"Failed to write configuration file: {e}")
+    except Exception as e:
+        agent_error(f"Failed to add provider: {e}")
+
+
+def _cmd_provider_edit(name: str) -> None:
+    """Edit an existing custom provider configuration."""
+    from pathlib import Path
+    import json
+    from src.providers import load_custom_providers
+    
+    providers_dir = Path.home() / ".klat" / "settings" / "providers"
+    file_path = providers_dir / f"{name}.json"
+    if not file_path.exists():
+        agent_error(f"Custom provider '{name}' does not exist.")
+        return
+        
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+    except OSError as e:
+        agent_error(f"Failed to read custom provider configuration: {e}")
+        return
+    except json.JSONDecodeError as e:
+        agent_error(f"Failed to parse custom provider JSON: {e}")
+        return
+        
+    print(f"\n  Editing provider: {GREEN}{name}{RESET}\n")
+    try:
+        display_name = _prompt_with_default("Display Name", config_data.get("display_name", name.title()))
+        
+        backend = ""
+        while backend not in ("openai-compat", "gemini"):
+            backend = _prompt_with_default("Backend (openai-compat/gemini)", config_data.get("backend", "openai-compat")).lower().strip()
+            
+        base_url_default = config_data.get("base_url") or ""
+        base_url_input = _prompt_with_default("Base URL (blank for none)", base_url_default)
+        base_url = base_url_input if base_url_input else None
+        
+        default_model = _prompt_with_default("Default Model", config_data.get("default_model", ""))
+        
+        env_key_default = config_data.get("env_key") or ""
+        env_key_input = _prompt_with_default("Environment API Key Name (blank for none)", env_key_default)
+        env_key = env_key_input if env_key_input else None
+        
+        notes = _prompt_with_default("Notes/Description", config_data.get("notes", f"Custom provider '{name}'"))
+        
+        updated_data = {
+            "display_name": display_name,
+            "backend": backend,
+            "base_url": base_url,
+            "default_model": default_model,
+            "env_key": env_key,
+            "notes": notes
+        }
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(updated_data, f, indent=2)
+            
+        load_custom_providers()
+        agent_print(f"Provider '{GREEN}{name}{RESET}' successfully updated!")
+        
+        # Optionally set the API key
+        if env_key:
+            api_key = input(f"  Enter value for environment key {GREEN}{env_key}{RESET} (blank to skip/keep current): ").strip()
+            if api_key:
+                set_config_value(env_key.lower(), api_key)
+                agent_print(f"Saved {GREEN}{env_key}{RESET} to settings.")
+                
+    except (KeyboardInterrupt, EOFError):
+        agent_print("Edit cancelled.")
+    except OSError as e:
+        agent_error(f"Failed to write configuration file: {e}")
+    except Exception as e:
+        agent_error(f"Failed to edit provider: {e}")
+
+
+def _cmd_provider_remove(name: str) -> None:
+    """Remove a custom provider configuration."""
+    from pathlib import Path
+    from src.providers import load_custom_providers, PROVIDERS
+    
+    providers_dir = Path.home() / ".klat" / "settings" / "providers"
+    file_path = providers_dir / f"{name}.json"
+    if not file_path.exists():
+        agent_error(f"Custom provider '{name}' does not exist.")
+        return
+        
+    try:
+        confirm = input(f"  Are you sure you want to remove provider '{GREEN}{name}{RESET}'? (y/N): ").strip().lower()
+        if confirm not in ("y", "yes"):
+            agent_print("Action cancelled.")
+            return
+            
+        file_path.unlink()
+        load_custom_providers()
+        agent_print(f"Provider '{GREEN}{name}{RESET}' successfully removed!")
+        
+        # If the removed provider was active, switch to fallback
+        if current_provider() == name:
+            from src.config import configured_providers
+            available = configured_providers()
+            if available:
+                set_provider(available[0])
+                agent_print(f"Switched active provider to fallback: {GREEN}{available[0]}{RESET}")
+            else:
+                agent_error("No configured providers remaining. Please set up a provider.")
+                
+    except OSError as e:
+        agent_error(f"Failed to delete configuration file: {e}")
+    except Exception as e:
+        agent_error(f"Failed to remove provider: {e}")
+
+
 def _cmd_provider(args: str) -> None:
-    """Handle /provider [name] — list or switch providers."""
+    """Handle /provider [name] — list, switch, add, edit, or remove providers."""
     tokens = parse_cli_args(args)
     name = tokens[0].lower() if tokens else ""
+
+    if name in ("add", "edit", "remove"):
+        if len(tokens) < 2:
+            agent_error(f"Usage: /provider {name} <provider_name>")
+            return
+        provider_name = tokens[1].lower().strip()
+        if name == "add":
+            _cmd_provider_add(provider_name)
+        elif name == "edit":
+            _cmd_provider_edit(provider_name)
+        elif name == "remove":
+            _cmd_provider_remove(provider_name)
+        return
 
     if not name:
         # List all providers
@@ -559,6 +764,9 @@ def _cmd_help() -> None:
   ─────────────────────────────────────────────────────
   /provider              list all providers
   /provider <name>       switch active provider
+  /provider add <name>   create/configure a new custom provider
+  /provider edit <name>  edit an existing custom provider
+  /provider remove <name> remove a custom provider
   /model                 show current model
   /model <name>          set model for this session
   /reasoning             show current reasoning level

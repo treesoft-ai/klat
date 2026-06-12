@@ -544,16 +544,21 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
     provider      = get_provider(provider_name)
     model         = current_model()
 
+    from src.providers import BUILTIN_PROVIDERS
+
+    env_key = provider.get("env_key")
+    api_key = os.getenv(env_key, "") if env_key else ""
+
+    if provider_name in BUILTIN_PROVIDERS and not api_key:
+        raise RuntimeError(
+            f"{env_key} is not set. "
+            f"Add it to ~/.klat/settings/config.json to use {provider['display_name']}."
+        )
+
     if provider_name == "vertexai":
         client = genai.Client(vertexai=True, project=project, location=location)
     else:
-        api_key = os.getenv(provider["env_key"], "")
-        if not api_key:
-            raise RuntimeError(
-                f"{provider['env_key']} is not set. "
-                f"Add it to env/.env to use {provider['display_name']}."
-            )
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key if api_key else "dummy")
 
     from src.tools import get_all_tool_declarations
     declarations = [
@@ -729,12 +734,19 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
     provider      = get_provider(provider_name)
     model         = current_model()
 
-    api_key = os.getenv(provider["env_key"], "")
-    if not api_key:
+    from src.providers import BUILTIN_PROVIDERS
+
+    env_key = provider.get("env_key")
+    api_key = os.getenv(env_key, "") if env_key else ""
+
+    if provider_name in BUILTIN_PROVIDERS and not api_key:
         raise RuntimeError(
-            f"{provider['env_key']} is not set. "
-            f"Add it to env/.env to use {provider['display_name']}."
+            f"{env_key} is not set. "
+            f"Add it to ~/.klat/settings/config.json to use {provider['display_name']}."
         )
+
+    if not api_key:
+        api_key = "dummy"
 
     reasoning = current_reasoning().lower()
     extra_params = {}
@@ -1406,16 +1418,24 @@ def run_single_completion(prompt: str, system_prompt: str) -> str:
     provider_name = current_provider()
     provider      = get_provider(provider_name)
     model         = current_model()
+
+    from src.providers import BUILTIN_PROVIDERS
+
+    env_key = provider.get("env_key")
+    api_key = os.getenv(env_key, "") if env_key else ""
+
+    if provider_name in BUILTIN_PROVIDERS and not api_key:
+        raise RuntimeError(
+            f"{env_key} is not set. "
+            f"Add it to ~/.klat/settings/config.json to use {provider['display_name']}."
+        )
     
     if provider["backend"] == "gemini":
         project, location = ensure_env()
         if provider_name == "vertexai":
             client = genai.Client(vertexai=True, project=project, location=location)
         else:
-            api_key = os.getenv(provider["env_key"], "")
-            if not api_key:
-                raise RuntimeError(f"{provider['env_key']} is not set. Add it to env/.env to use {provider['display_name']}.")
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=api_key if api_key else "dummy")
             
         response = client.models.generate_content(
             model=model,
@@ -1429,17 +1449,14 @@ def run_single_completion(prompt: str, system_prompt: str) -> str:
             p_tok, c_tok = extract_gemini_tokens(usage)
             from src import sessions
             sessions.add_tokens(p_tok, c_tok)
-
+ 
         parts = []
         for p in response.candidates[0].content.parts:
             if hasattr(p, "text") and p.text:
                 parts.append(p.text)
         return " ".join(parts).strip()
     else:
-        api_key = os.getenv(provider["env_key"], "")
-        if not api_key:
-            raise RuntimeError(f"{provider['env_key']} is not set. Add it to env/.env to use {provider['display_name']}.")
-        client = OpenAI(base_url=provider["base_url"], api_key=api_key)
+        client = OpenAI(base_url=provider["base_url"], api_key=api_key if api_key else "dummy")
         
         response = client.chat.completions.create(
             model=model,

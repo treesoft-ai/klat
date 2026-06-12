@@ -638,6 +638,31 @@ if HAS_PROMPT_TOOLKIT:
             # Smart completion for /provider
             if text.startswith("/provider "):
                 arg = text[len("/provider "):]
+                
+                # Check for subcommands first
+                subcmds = ["add", "edit", "remove"]
+                for sc in subcmds:
+                    if sc.startswith(arg) and sc != arg:
+                        return Suggestion(sc[len(arg):])
+                        
+                # Check for sub-arguments for edit and remove (custom providers only)
+                if arg.startswith("edit ") or arg.startswith("remove "):
+                    parts = arg.split(None, 1)
+                    sub_arg = parts[1] if len(parts) > 1 else ""
+                    
+                    from pathlib import Path
+                    custom_providers = []
+                    providers_dir = Path.home() / ".klat" / "settings" / "providers"
+                    if providers_dir.exists():
+                        try:
+                            custom_providers = [p.stem.lower() for p in providers_dir.glob("*.json") if p.is_file()]
+                        except Exception:
+                            pass
+                    for cp in sorted(custom_providers):
+                        if cp.startswith(sub_arg) and cp != sub_arg:
+                            return Suggestion(cp[len(sub_arg):])
+                    return None
+
                 try:
                     from src.config import configured_providers
                     providers = sorted(configured_providers())

@@ -21,7 +21,7 @@ import sys
 import json
 from pathlib import Path
 
-from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider
+from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider, BUILTIN_PROVIDERS
 
 # Configuration paths
 CONFIG_DIR = Path.home() / ".klat" / "settings"
@@ -367,11 +367,16 @@ def apply_session_settings(provider: str, model: str, reasoning: str) -> None:
 
 def _has_credentials(provider_key: str) -> bool:
     """Return True if the provider has enough credentials to be usable."""
+    if provider_key not in BUILTIN_PROVIDERS:
+        return True
     p = PROVIDERS[provider_key]
-    if p["env_key"] is None:
+    if provider_key == "vertexai":
         # Vertex AI — relies on gcloud ADC; we can't easily verify, so
         # check if GOOGLE_CLOUD_PROJECT is set as a proxy.
         return bool(os.getenv("GOOGLE_CLOUD_PROJECT", "").strip())
+    if p.get("env_key") is None:
+        # Custom provider with no env API key required (e.g., local models)
+        return True
     return bool(os.getenv(p["env_key"], "").strip())
 
 
