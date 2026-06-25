@@ -576,8 +576,10 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
     if reasoning != "none":
         is_gemini_3 = "3." in model or "3-" in model
         if is_gemini_3:
+            # Gemini 3.x accepts "none", "minimal", "low", "medium", "high" — map "xhigh" to "high"
+            gemini_level = "high" if reasoning == "xhigh" else reasoning
             thinking_config = types.ThinkingConfig(
-                thinking_level=reasoning
+                thinking_level=gemini_level
             )
         else:
             budget_map = {
@@ -750,19 +752,23 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
 
     reasoning = current_reasoning().lower()
     extra_params = {}
-    if provider_name == "openrouter":
-        extra_params["extra_body"] = {
-            "reasoning": {
-                "effort": reasoning
+    if reasoning != "none":
+        if provider_name == "openrouter":
+            # OpenRouter uses effort values: "low", "medium", "high"
+            openrouter_effort = "medium"
+            if reasoning in ("minimal", "low"):
+                openrouter_effort = "low"
+            elif reasoning in ("high", "xhigh"):
+                openrouter_effort = "high"
+            extra_params["extra_body"] = {
+                "reasoning": {
+                    "effort": openrouter_effort
+                }
             }
-        }
-    elif reasoning != "none":
-        if provider_name == "openai":
+        elif provider_name == "openai":
             openai_effort = "medium"
             if reasoning in ("minimal", "low"):
                 openai_effort = "low"
-            elif reasoning == "medium":
-                openai_effort = "medium"
             elif reasoning in ("high", "xhigh"):
                 openai_effort = "high"
             extra_params["reasoning_effort"] = openai_effort
@@ -798,6 +804,18 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
 
     while True:
         response_stream = None
+
+        def _is_reasoning_error(msg: str) -> bool:
+            msg = msg.lower()
+            return (
+                "reasoning" in msg
+                or "extra_body" in msg
+                or "reasoning_effort" in msg
+                or "unexpected keyword argument" in msg
+                or "mandatory" in msg
+                or "cannot be disabled" in msg
+            )
+
         try:
             response_stream = client.chat.completions.create(
                 **base_params,
@@ -805,32 +823,38 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                 **extra_params
             )
         except Exception as e:
+            err_msg = str(e)
+            # Only retry without stream_options if the error looks like a stream_options rejection.
+            # For all other errors (auth, rate limit, model not found, etc.) — raise immediately.
+            if "stream_options" not in err_msg.lower() and not _is_reasoning_error(err_msg):
+                raise
+
+            # Try again without stream_options (some providers don't support it)
             try:
                 response_stream = client.chat.completions.create(
                     **base_params,
                     **extra_params
                 )
             except Exception as e2:
-                if extra_params:
-                    err_msg = str(e2).lower()
-                    if "mandatory" in err_msg or "cannot be disabled" in err_msg:
+                err_msg2 = str(e2)
+                # Only strip reasoning params if the error is actually about them
+                if extra_params and _is_reasoning_error(err_msg2):
+                    if "mandatory" in err_msg2.lower() or "cannot be disabled" in err_msg2.lower():
                         ui.agent_step("reasoning", "Mandatory for this model; using defaults")
-                    elif "unexpected keyword argument" in err_msg or "extra_body" in err_msg or "extra_params" in err_msg:
-                        ui.agent_step("reasoning-fallback", "Not supported by this model; retrying")
                     else:
-                        ui.agent_step("reasoning-fallback", "Unsupported or error encountered; retrying")
+                        ui.agent_step("reasoning-fallback", "Not supported by this model; retrying without reasoning params")
+
+                    try:
+                        response_stream = client.chat.completions.create(
+                            **base_params,
+                            stream_options={"include_usage": True}
+                        )
+                    except Exception:
+                        response_stream = client.chat.completions.create(
+                            **base_params
+                        )
                 else:
                     raise e2
-
-                try:
-                    response_stream = client.chat.completions.create(
-                        **base_params,
-                        stream_options={"include_usage": True}
-                    )
-                except Exception:
-                    response_stream = client.chat.completions.create(
-                        **base_params
-                    )
 
         # Stream parser state
         accumulated_content = ""
