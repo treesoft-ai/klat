@@ -773,7 +773,17 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
     else:
         resolved_message = message
 
-    client = OpenAI(base_url=provider["base_url"], api_key=api_key)
+    from src.config import current_spoof
+    spoof_profile = current_spoof()
+    spoof_headers: dict[str, str] = {}
+    if spoof_profile == "codex":
+        spoof_headers = {
+            "Originator": "codex_cli_rs",
+            "User-Agent": "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64)",
+            "Version": "0.101.0",
+        }
+
+    client = OpenAI(base_url=provider["base_url"], api_key=api_key, default_headers=spoof_headers if spoof_headers else None)
     messages.append({"role": "user", "content": resolved_message})
 
     openai_tools = _get_openai_tools()

@@ -4,7 +4,7 @@ Klat — a simple conversational chatbot by TreeSoft.
 
 import sys
 import shlex
-from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS, current_theme, set_theme, current_ui_mode, set_ui_mode
+from src.config import ensure_env, current_provider, current_model, set_provider, set_model, current_reasoning, set_reasoning, get_all_settings, set_config_value, reset_config_value, randomize_config_value, current_complexity, set_complexity, COMPLEXITY_LEVELS, current_theme, set_theme, current_ui_mode, set_ui_mode, current_spoof, set_spoof
 from src.providers import PROVIDERS, PROVIDER_NAMES, get_provider, load_custom_providers
 from src import ui
 from src.ui import print_banner, prompt_input, agent_print, agent_error, GREEN, DIM, RESET
@@ -329,6 +329,34 @@ def _cmd_streaming(args: str) -> None:
         agent_print(f"Streaming set to {GREEN}Off{RESET}")
     else:
         agent_error(f"Invalid streaming value '{args}'. Use 'on' or 'off'.")
+
+
+SPOOF_PROFILES = ("codex",)
+
+
+def _cmd_spoof(args: str) -> None:
+    """Handle /spoof [codex|off] — show or change the active spoof profile."""
+    tokens = parse_cli_args(args)
+    val = tokens[0].lower() if tokens else ""
+
+    if not val:
+        active = current_spoof()
+        if active:
+            print(f"\n  Spoof: {GREEN}{active}{RESET} (active)\n")
+        else:
+            print(f"\n  Spoof: {GREEN}off{RESET}\n")
+        return
+
+    if val in ("off", "none", "disable"):
+        set_spoof(None)
+        agent_print(f"Spoof disabled.")
+    elif val == "codex":
+        set_spoof("codex")
+        agent_print(
+            f"Spoof set to {GREEN}codex{RESET} — requests will include Codex CLI headers."
+        )
+    else:
+        agent_error(f"Unknown spoof profile '{val}'. Available: codex, off")
 
 
 def _cmd_setting(args: str) -> None:
@@ -773,6 +801,8 @@ def _cmd_help() -> None:
   /reasoning <level>     set reasoning level (None, Minimal, Low, Medium, High, XHigh)
   /streaming             show current streaming status
   /streaming <on|off>    toggle streaming response on or off
+  /spoof                 show current spoof profile
+  /spoof <profile|off>   spoof client identity (codex)
   /complexity            show current complexity level
   /complexity <level>    set complexity level (nano, essential, full)
   /ui                    show current UI mode
@@ -1060,6 +1090,8 @@ def main() -> None:
                         _cmd_reasoning(remainder)
                     elif cmd == "streaming":
                         _cmd_streaming(remainder)
+                    elif cmd == "spoof":
+                        _cmd_spoof(remainder)
                     elif cmd == "complexity":
                         _cmd_complexity(remainder, agent)
                     elif cmd == "ui":

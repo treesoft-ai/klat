@@ -550,6 +550,7 @@ if HAS_PROMPT_TOOLKIT:
                 "/extension disable",
                 "/extension remove",
                 "/extension",
+                "/spoof",
                 "/reset",
                 "/help",
                 "/create",
@@ -704,6 +705,15 @@ if HAS_PROMPT_TOOLKIT:
             if text.startswith("/streaming "):
                 arg = text[len("/streaming "):]
                 options = ["on", "off"]
+                for opt in options:
+                    if opt.startswith(arg) and opt != arg:
+                        return Suggestion(opt[len(arg):])
+                return None
+
+            # Smart completion for /spoof
+            if text.startswith("/spoof "):
+                arg = text[len("/spoof "):]
+                options = ["codex", "off"]
                 for opt in options:
                     if opt.startswith(arg) and opt != arg:
                         return Suggestion(opt[len(arg):])

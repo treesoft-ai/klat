@@ -84,6 +84,18 @@ BUILTIN_PROVIDERS: dict[str, dict] = {
         "env_key": "NVIDIA_API_KEY",
         "notes": "Nvidia NIM — requires NVIDIA_API_KEY",
     },
+
+    # ------------------------------------------------------------------ #
+    #  AgentRouter                                                         #
+    # ------------------------------------------------------------------ #
+    "agentrouter": {
+        "display_name": "AgentRouter",
+        "backend": "openai-compat",
+        "base_url": "https://agentrouter.org/v1/",
+        "default_model": "gpt-4o",
+        "env_key": "AGENTROUTER_API_KEY",
+        "notes": "AgentRouter — requires AGENTROUTER_API_KEY (use /spoof codex for client access)",
+    },
 }
 
 PROVIDERS: dict[str, dict] = {}

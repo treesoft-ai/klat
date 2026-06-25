@@ -45,6 +45,7 @@ _state: dict = {
     "complexity": "full",
     "theme": "green",
     "ui_mode": "simple",
+    "spoof": None,      # None = disabled; "codex" = spoof Codex CLI headers
 }
 
 _config: dict = {}
@@ -156,6 +157,17 @@ def set_streaming(value: bool) -> None:
     _persist()
 
 
+def current_spoof() -> str | None:
+    """Return the active spoof profile, or None if disabled."""
+    return _state.get("spoof", None)
+
+
+def set_spoof(value: str | None) -> None:
+    """Set and persist the active spoof profile. Pass None to disable."""
+    _state["spoof"] = value
+    _persist()
+
+
 def current_provider() -> str:
     return _state["provider"]
 
@@ -204,6 +216,7 @@ def _persist() -> None:
     current_data["complexity"] = current_complexity()
     current_data["theme"] = current_theme()
     current_data["ui_mode"] = current_ui_mode()
+    current_data["spoof"] = current_spoof() or ""
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_data, f, indent=2)
@@ -562,6 +575,7 @@ def ensure_env() -> tuple[str, str]:
     saved_complexity = _config.get("complexity", "full").strip().lower()
     saved_theme = _config.get("theme", "green").strip().lower()
     saved_ui_mode = _config.get("ui_mode", "simple").strip().lower()
+    saved_spoof = _config.get("spoof", "").strip().lower()
 
     if saved_provider and saved_provider in PROVIDERS:
         _state["provider"] = saved_provider
@@ -581,6 +595,7 @@ def ensure_env() -> tuple[str, str]:
         _state["ui_mode"] = saved_ui_mode
     else:
         _state["ui_mode"] = "simple"
+    _state["spoof"] = saved_spoof if saved_spoof in ("codex",) else None
     allowed_themes = {"green", "red", "blue", "yellow", "pure white", "orange", "purple", "cyan", "pink", "rainbow", "cyberpunk", "sunset", "matrix", "ocean", "forest"}
     from src.ui import parse_custom_theme
     if saved_theme == "animated_rainbow":
