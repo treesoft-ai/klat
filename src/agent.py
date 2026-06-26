@@ -721,6 +721,7 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
                             print(ui.RESET)
                             printed_thought_prefix = False
                         if not printed_reply_prefix:
+                            print()
                             print(f"{ui.GREEN}·{ui.RESET} ", end="", flush=True)
                             printed_reply_prefix = True
                         print(p.text, end="", flush=True)
@@ -997,6 +998,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                                 print(ui.RESET)
                                 printed_thought_prefix = False
                             if not printed_reply_prefix:
+                                print()
                                 print(f"{ui.GREEN}·{ui.RESET} ", end="", flush=True)
                                 printed_reply_prefix = True
                             print(char, end="", flush=True)
@@ -1377,6 +1379,7 @@ class KlatAgent:
                 if current_streaming():
                     sessions.record_ui_event("reply", text=strip_markdown(reply))
                 else:
+                    print()
                     ui.agent_print(reply)
 
             # Save session now that the reply is printed and added to transcript

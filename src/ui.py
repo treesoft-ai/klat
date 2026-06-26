@@ -841,7 +841,7 @@ if HAS_PROMPT_TOOLKIT:
                         if name_lower in ("readme.md", "readme.txt", "readme"):
                             symbol = "i "
 
-                    display_text = f"{symbol}{entry}\\" if is_dir else f"{symbol}{entry}"
+                    display_text = f"{symbol}{entry}" if is_dir else f"{symbol}{entry}"
                     yield Completion(
                         completion_text,
                         start_position=-len(prefix),
@@ -917,6 +917,14 @@ if HAS_PROMPT_TOOLKIT:
             def _(event):
                 event.current_buffer.insert_text('\n')
 
+            # Backspace re-triggers completions in @ mention context
+            @kb.add('backspace')
+            def _(event):
+                buf = event.current_buffer
+                buf.delete_before_cursor(1)
+                if '@' in buf.document.text_before_cursor:
+                    buf.start_completion()
+
             _prompt_session = PromptSession(
                 completer=MentionCompleter(),
                 complete_while_typing=True,
@@ -934,6 +942,11 @@ if HAS_PROMPT_TOOLKIT:
                     _send_vscode_message({"action": "status", "state": "idle"})
                 except Exception:
                     pass
+
+            @_prompt_session.default_buffer.on_completions_changed.add_handler
+            def _(buffer):
+                if buffer.complete_state and buffer.complete_state.complete_index is None:
+                    buffer.complete_state.complete_index = 0
             
             # Customize the layout of PromptSession to:
             # 1. Start suggestions at the start of the line (left-aligned)

@@ -715,7 +715,7 @@ TOOL_LEVEL_MAP: dict[str, str] = {
     "write_file":      "nano",
     "plan":            "essential",
     "todo":            "essential",
-    "patch_file":      "essential",
+    "patch_file":      "nano",
     "replace_in_file": "essential",
     "insert_lines":    "essential",
     "list_dir":        "essential",
@@ -764,6 +764,12 @@ def _resolve(path: str) -> Path:
 # Implementations
 # ---------------------------------------------------------------------------
 
+_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico", ".tiff", ".tif"})
+
+def _is_image_file(path: str | Path) -> bool:
+    return Path(path).suffix.lower() in _IMAGE_EXTENSIONS
+
+
 def _read_file(path: str | list[str], start_line: int | None = None, end_line: int | None = None) -> str:
     if isinstance(path, list):
         results: list[str] = []
@@ -775,6 +781,9 @@ def _read_file(path: str | list[str], start_line: int | None = None, end_line: i
                 continue
             if not p.is_file():
                 results.append(f"{header}\nError: not a file\n")
+                continue
+            if _is_image_file(p):
+                results.append(f"{header}\nError: Cannot read image files — this model does not support image input. Describe the image to the user instead.\n")
                 continue
             try:
                 content = p.read_text(encoding="utf-8", errors="replace")
@@ -788,6 +797,8 @@ def _read_file(path: str | list[str], start_line: int | None = None, end_line: i
         return f"Error: not found: {p}"
     if not p.is_file():
         return f"Error: not a file: {p}"
+    if _is_image_file(p):
+        return "Error: Cannot read image files — this model does not support image input. Describe the image to the user instead."
     try:
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
         if not lines:
