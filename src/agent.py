@@ -489,16 +489,85 @@ def rebuild_system_prompt() -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _args_summary(args: dict) -> str:
+def _format_tool_call(name: str, args: dict) -> str:
+    """Format a tool call into a clean human-readable description."""
     if not args:
-        return ""
-    items = []
-    for k, v in args.items():
-        val = str(v)
-        if len(val) > 60:
-            val = val[:57] + "..."
-        items.append(f"{k}={val}")
-    return ", ".join(items)
+        return name.replace("_", " ").title()
+
+    def _filename(p: str) -> str:
+        return os.path.basename(p.replace("\\", "/"))
+
+    if name == "read_file":
+        path = args.get("path", "")
+        if isinstance(path, list):
+            return f"Read {len(path)} files"
+        fname = _filename(path)
+        start = args.get("start_line")
+        end = args.get("end_line")
+        if start or end:
+            return f"Read {fname} ({start or 1}-{end or '…'})"
+        return f"Read {fname}"
+    elif name == "write_file":
+        return f"Wrote {_filename(args.get('path', ''))}"
+    elif name == "patch_file":
+        return f"Patched {_filename(args.get('path', ''))} ({args.get('start_line')}-{args.get('end_line')})"
+    elif name == "replace_in_file":
+        return f"Replaced in {_filename(args.get('path', ''))}"
+    elif name == "insert_lines":
+        after = args.get("after_line", 0)
+        return f"Inserted in {_filename(args.get('path', ''))}" + (f" (line {after})" if after else " (prepend)")
+    elif name == "delete_file":
+        return f"Deleted {_filename(args.get('path', ''))}"
+    elif name == "delete_dir":
+        dirpath = args.get("path", "")
+        return f"Deleted directory {os.path.basename(dirpath.rstrip('/\\'))}"
+    elif name == "create_dir":
+        dirpath = args.get("path", "")
+        return f"Created directory {os.path.basename(dirpath.rstrip('/\\'))}"
+    elif name == "copy_file":
+        return f"Copied {_filename(args.get('source', ''))} -> {_filename(args.get('destination', ''))}"
+    elif name == "move_file":
+        return f"Moved {_filename(args.get('source', ''))} -> {_filename(args.get('destination', ''))}"
+    elif name == "search_files":
+        return f"Searched '{args.get('pattern', '')}' in {args.get('path', '.')}"
+    elif name == "find_file":
+        return f"Found '{args.get('pattern', '')}'"
+    elif name == "diff_files":
+        return f"Diffed {_filename(args.get('path_a', ''))} vs {_filename(args.get('path_b', ''))}"
+    elif name == "run_command":
+        cmd = args.get("command", "")
+        return f"Ran {cmd[:60] + '…' if len(cmd) > 60 else cmd}"
+    elif name == "list_dir":
+        return f"Listed {args.get('path', '.')}"
+    elif name == "tree":
+        p = args.get("path", ".")
+        return f"Treed {p}"
+    elif name == "git":
+        op = args.get("op", "")
+        extra = ""
+        git_args = args.get("args")
+        if git_args:
+            extra = " " + " ".join(str(a) for a in git_args[:3])
+            if len(git_args) > 3:
+                extra += "…"
+        return f"Ran git {op}{extra}"
+    elif name == "http_request":
+        return f"Fetched {args.get('url', '')[:60]}"
+    elif name == "env_var":
+        names = args.get("names", [])
+        return f"Read env vars ({', '.join(names[:3]) + ('…' if len(names) > 3 else '')})" if names else "Read env vars (all)"
+    elif name == "process_list":
+        f = args.get("filter")
+        return f"Listed processes ({f})" if f else "Listed processes"
+    elif name == "fetch_ai_models":
+        s = args.get("search", "")
+        return f"Searched AI models{f' ({s})' if s else ''}"
+    elif name == "plan":
+        return "Proposed plan"
+    elif name == "todo":
+        action = args.get("action", "")
+        return f"Updated todo ({action})"
+    return name.replace("_", " ").title()
 
 
 def extract_gemini_tokens(usage) -> tuple[int, int]:
@@ -695,7 +764,7 @@ def _run_gemini(message: str, history: list, project: str, location: str) -> str
             if name == "plan":
                 plan_called = True
             args = dict(call.args) if call.args else {}
-            ui.agent_step(name, _args_summary(args))
+            ui.agent_step(_format_tool_call(name, args), "")
             raw = dispatch(name, args)
             result_parts.append(types.Part(
                 function_response=types.FunctionResponse(
@@ -773,11 +842,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                 openai_effort = "high"
             extra_params["reasoning_effort"] = openai_effort
 
-    is_first_user_message = not any(msg.get("role") == "user" for msg in messages)
-    if is_first_user_message:
-        resolved_message = f"[System Instructions]\n{SYSTEM_PROMPT}\n\n[User Message]\n{message}"
-    else:
-        resolved_message = message
+    resolved_message = message
 
     from src.config import current_spoof
     spoof_profile = current_spoof()
@@ -1065,7 +1130,7 @@ def _run_openai_compat(message: str, messages: list[dict[str, Any]]) -> str:
                 })
                 continue
 
-            ui.agent_step(name, _args_summary(args))
+            ui.agent_step(_format_tool_call(name, args), "")
             raw = dispatch(name, args)
 
             messages.append({
@@ -1326,7 +1391,7 @@ class KlatAgent:
                  history=history,
                  backend=backend
             )
-        except BaseException:
+        except Exception:
             # Heal conversation history to keep it valid/uncorrupted without forgetting
             heal_openai_messages(self._openai_messages)
             heal_gemini_history(self._gemini_history)

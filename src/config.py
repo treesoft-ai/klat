@@ -1,15 +1,6 @@
 """
 Configuration and environment management for Klat.
 
-Provider / model selection is stored in env/.env and can be changed at
-runtime with the /provider and /model slash commands.
-
-Supported providers: vertexai, ai-studio, openai, anthropic, openrouter, nvidia-nim
-"""
-
-"""
-Configuration and environment management for Klat.
-
 Provider / model selection is stored in ~/.klat/settings/config.json and can be changed at
 runtime with the /provider and /model slash commands.
 

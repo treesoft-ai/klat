@@ -199,7 +199,11 @@ def replay_transcript() -> None:
         for event in _current_transcript:
             etype = event.get("type")
             if etype in ("user", "command"):
-                print(f"{ui.GREEN}>{ui.RESET} {event.get('text', '')}")
+                raw = event.get("text", "")
+                if "\n" in raw:
+                    print(ui.format_multiline(raw))
+                else:
+                    print(f"{ui.GREEN}>{ui.RESET} {raw}")
             elif etype == "thought":
                 ui.agent_thought(event.get("text", ""))
             elif etype == "step":

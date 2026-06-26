@@ -869,15 +869,36 @@ if HAS_PROMPT_TOOLKIT:
                 'scrollbar.button': 'bg:default fg:default',
             })
             
-            # Key bindings to customize Enter behavior when selecting a suggestion
             kb = KeyBindings()
-            
+
             @Condition
             def is_completion_selected():
                 app = get_app()
                 buf = app.current_buffer
                 return bool(buf.complete_state and buf.complete_state.current_completion)
-                
+
+            @Condition
+            def no_completion_selected():
+                app = get_app()
+                buf = app.current_buffer
+                return not (buf.complete_state and buf.complete_state.current_completion)
+
+            # Track when text last changed to detect pastes
+            _last_text_change = [time.time()]
+
+            # Enter submits normally. If text changed within the last 60ms,
+            # it's likely a paste — insert newline instead of submitting.
+            @kb.add('enter', filter=no_completion_selected)
+            def _(event):
+                buf = event.current_buffer
+                if not buf.text.strip():
+                    return
+                if time.time() - _last_text_change[0] < 0.06:
+                    buf.insert_text('\n')
+                else:
+                    buf.validate_and_handle()
+
+            # Enter accepts the selected completion
             @kb.add('enter', filter=has_completions & is_completion_selected)
             def _(event):
                 buf = event.current_buffer
@@ -891,25 +912,23 @@ if HAS_PROMPT_TOOLKIT:
                         buf.insert_text(' ')
                         buf.cancel_completion()
 
-            @kb.add('escape', 'enter', filter=has_completions & is_completion_selected)
+            # ALT+Enter inserts a newline
+            @kb.add('escape', 'enter')
             def _(event):
-                buf = event.current_buffer
-                if buf.complete_state and buf.complete_state.current_completion:
-                    comp = buf.complete_state.current_completion
-                    buf.apply_completion(comp)
-                    buf.insert_text(' ')
-                    buf.cancel_completion()
+                event.current_buffer.insert_text('\n')
 
             _prompt_session = PromptSession(
                 completer=MentionCompleter(),
                 complete_while_typing=True,
                 auto_suggest=KlatAutoSuggest(),
                 style=style,
-                key_bindings=kb
+                key_bindings=kb,
+                multiline=True
             )
             
             @_prompt_session.default_buffer.on_text_changed.add_handler
             def _(buffer):
+                _last_text_change[0] = time.time()
                 try:
                     from src.tools import _send_vscode_message
                     _send_vscode_message({"action": "status", "state": "idle"})
@@ -951,6 +970,17 @@ if HAS_PROMPT_TOOLKIT:
         return _prompt_session
 
 
+def format_multiline(text: str) -> str:
+    """Format multiline text for display: first line prefixed with '>', rest indented 4 spaces."""
+    if not text:
+        return ""
+    lines = text.split("\n")
+    result = f"{GREEN}>{RESET} {lines[0]}"
+    for line in lines[1:]:
+        result += f"\n    {line}"
+    return result
+
+
 def prompt_input(label: str = "task") -> str:
     """Show a clean prompt and return user input."""
     try:
@@ -959,9 +989,24 @@ def prompt_input(label: str = "task") -> str:
             prompt_text = ANSI(f"{GREEN}>{RESET} ")
             return session.prompt(prompt_text)
         else:
-            return input(f"{GREEN}>{RESET} ")
+            lines: list[str] = []
+            while True:
+                p = f"{GREEN}>{RESET} " if not lines else "    "
+                try:
+                    line = input(p)
+                except (KeyboardInterrupt, EOFError):
+                    if not lines:
+                        raise
+                    print()
+                    break
+                if not line:
+                    break
+                lines.append(line)
+            return "\n".join(lines)
     except (KeyboardInterrupt, EOFError):
-        print()
+        sys.stdout.write("\033[2K\r")     # clear current line
+        sys.stdout.write("\033[1A\033[2K\r")  # move up, clear the ">" prompt line
+        sys.stdout.flush()
         print_session_summary()
         sys.exit(0)
 
@@ -1030,96 +1075,14 @@ def agent_thought(text: str) -> None:
 
 def agent_step(action: str, detail: str = "") -> None:
     """Print a single agent action step."""
-    import time
-    import sys
-    import shutil
-
     from src.config import current_ui_mode
     if current_ui_mode() == "professional":
         action_formatted = action.replace("_", " ").replace("-", " ").title()
     else:
         action_formatted = action
 
-    # The full visible line is: "  → " + action_formatted + "  " + detail
-    # We animate the entire thing from character 0 so the line types itself in
-    # from a dead start — indent, arrow, and all.
-    PREFIX = "  → "           # 4 visible chars
-    PREFIX_VISUAL = len(PREFIX)
-
-    # Clamp content to terminal width to prevent line-wrapping (which is what
-    # caused the "dozens of repetitions" bug: \r only rewinds to col 0 of the
-    # *current* visual line, so any wrap makes subsequent frames print on new lines).
-    try:
-        cols = shutil.get_terminal_size(fallback=(80, 24)).columns
-    except Exception:
-        cols = 80
-    max_content = max(cols - PREFIX_VISUAL - 1, 10)
-
     detail_part = f"  {detail}" if detail else ""
-    raw_content = action_formatted + detail_part
-    if len(raw_content) > max_content:
-        raw_content = raw_content[:max_content - 1] + "…"
-
-    action_clamped = raw_content[:len(action_formatted)] if len(raw_content) >= len(action_formatted) else raw_content
-    detail_clamped = raw_content[len(action_clamped):]
-
-    # Full flat string animated character-by-character from column 0:
-    #   chars 0-3  : PREFIX ("  → ")
-    #   chars 4+   : action_clamped + detail_clamped
-    full_flat = PREFIX + action_clamped + detail_clamped
-    total = len(full_flat)
-
-    delay = 0.04
-
-    for step in range(1, total + 1):
-        visible = full_flat[:step]
-
-        # Split visible portion into its three segments
-        pre_vis   = visible[:PREFIX_VISUAL]
-        after_pre = visible[PREFIX_VISUAL:]
-        act_vis   = after_pre[:len(action_clamped)]
-        det_vis   = after_pre[len(action_clamped):]
-
-        # Render prefix: spaces then green →, then space
-        if len(pre_vis) < 3:
-            colored_pre = pre_vis               # still in the leading spaces
-        elif len(pre_vis) == 3:
-            colored_pre = f"  {GREEN}→{RESET}"
-        else:
-            colored_pre = f"  {GREEN}→{RESET} "
-
-        # Render action with green gradient; bright-white lead char while animating the action
-        if act_vis:
-            if len(act_vis) < len(action_clamped):
-                grad_done   = colorize_gradient(act_vis[:-1]) if len(act_vis) > 1 else ""
-                colored_act = grad_done + f"\033[1;37m{act_vis[-1]}\033[0m"
-            else:
-                colored_act = colorize_gradient(act_vis)
-        else:
-            colored_act = ""
-
-        # Render detail dim; bright-white lead char while animating the detail
-        if det_vis:
-            if len(det_vis) < len(detail_clamped):
-                dim_done    = f"{DIM}{det_vis[:-1]}{RESET}" if len(det_vis) > 1 else ""
-                colored_det = dim_done + f"\033[1;37m{det_vis[-1]}\033[0m"
-            else:
-                colored_det = f"{DIM}{det_vis}{RESET}"
-        else:
-            colored_det = ""
-
-        # \033[2K erases the entire current line; \r returns to column 0.
-        output_line = f"\033[2K\r{colored_pre}{colored_act}{colored_det}"
-        try:
-            sys.stdout.write(output_line)
-        except UnicodeEncodeError:
-            encoding = sys.stdout.encoding or "utf-8"
-            sys.stdout.write(output_line.encode(encoding, errors="replace").decode(encoding))
-        sys.stdout.flush()
-        time.sleep(delay)
-
-    sys.stdout.write("\n")
-    sys.stdout.flush()
+    print(f"  {GREEN}→{RESET} {colorize_gradient(action_formatted)}{DIM}{detail_part}{RESET}")
 
     try:
         from src import sessions

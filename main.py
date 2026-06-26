@@ -954,7 +954,13 @@ def int_to_words(n: int) -> str:
         if remainder:
             return f"{hundreds}-hundred-and-{int_to_words(remainder)}"
         return f"{hundreds}-hundred"
-    return str(n)
+    if n < 1000000:
+        thousands = int_to_words(n // 1000)
+        remainder = n % 1000
+        if remainder:
+            return f"{thousands}-thousand-{int_to_words(remainder)}"
+        return f"{thousands}-thousand"
+    return f"{n:,}"
 
 
 # ---------------------------------------------------------------------------
@@ -1153,7 +1159,6 @@ def main() -> None:
         except KeyboardInterrupt:
             _agent_busy = False
             print()
-            agent_error("Stopped.")
         except Exception as e:
             _agent_busy = False
             agent_error(str(e))
